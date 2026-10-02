@@ -12,7 +12,7 @@ import {
   BURST_GAP, CHAR_H, COVER_LIMIT, CROUCH, DEFAULT_MAX_CHARS, EDGE_MARGIN, FRIEND_DIST, GRAVITY,
   JUMP_REACH, JUMP_RISE, MOUSE_HAPPY, MOUSE_LOOK, POP_APEX, POP_DELAY, REPOP_DELAY, SHAKE_MOVE, STEP,
 } from './constants.js'
-import { KINDS, castOf } from './cast.js'
+import { KINDS, MOVES, castOf } from './cast.js'
 import { between, pick, rand, weighted } from './rng.js'
 import { nearestVisible, segmentAt, standable, visibleLength, visibleSegments } from './surfaces.js'
 
@@ -68,7 +68,10 @@ export function setWindows(world, list) {
     const before = prev.get(ch.win)
     const now = world.byId.get(ch.win)
     if (!before || !now) continue
-    if (Math.abs(now.x - before.x) + Math.abs(now.y - before.y) > SHAKE_MOVE) ch.shake = 0.5
+    if (Math.abs(now.x - before.x) + Math.abs(now.y - before.y) > SHAKE_MOVE) {
+      ch.shake = 0.5
+      ch.exclaim = 1
+    }
   }
 
   // 새 창. 처음 켰을 때는 이미 떠 있던 창들이 한꺼번에 「새 창」이라 차례로 나오게 한다.
@@ -100,11 +103,14 @@ export function step(world, dt = STEP) {
   runPops(world)
   for (const ch of world.chars) {
     ch.anim += dt
+    ch.actionAge += dt
     if (ch.say) {
       ch.say.t -= dt
       if (ch.say.t <= 0) ch.say = null
     }
     if (ch.shake > 0) ch.shake = Math.max(0, ch.shake - dt)
+    if (ch.exclaim > 0) ch.exclaim = Math.max(0, ch.exclaim - dt)
+    if (ch.love > 0) ch.love = Math.max(0, ch.love - dt)
     if (ch.squash > 0) ch.squash = Math.max(0, ch.squash - dt * 4)
     if (ch.mode === 'ground') stepGround(world, ch, dt)
     else if (ch.mode === 'air') stepAir(world, ch, dt)
@@ -204,11 +210,17 @@ function newChar(world, kind) {
     facing: rand(world) < 0.5 ? -1 : 1,
     action: 'idle',
     actionT: 0,
+    actionAge: 0,       // 지금 행동을 시작한 지 몇 초(그림이 자세를 서서히 바꾸는 데 쓴다)
     target: 0,          // 걷기 목표 relX
     dropAtEnd: false,   // 목표에 닿으면 창 끝에서 뛰어내린다
     jump: null,         // 웅크린 뒤 날아갈 { vx, vy }
     popping: false,
     popTarget: null,
+    spin: 0,            // 공중제비 회전 속도(rad/s). 0 이면 안 돈다
+    airT: 0,            // 이번에 뜬 지 몇 초
+    prop: null,         // 먹고 마시는 것(그림 문자)
+    exclaim: 0,         // 「!」 남은 시간
+    love: 0,            // 하트 남은 시간
     coveredT: 0,
     shake: 0,
     squash: 0,
@@ -282,6 +294,8 @@ function launchPop(world, ch, win) {
   ch.vy = -Math.sqrt(2 * GRAVITY * Math.max(rise, 1))
   ch.popping = true
   ch.popTarget = win.id
+  ch.airT = 0
+  ch.spin = 0
   ch.action = 'fly'
   ch.coveredT = 0
   ch.jump = null
@@ -335,9 +349,13 @@ function stepGround(world, ch, dt) {
         ch.action = 'idle'
         ch.actionT = 1.5
         say(ch, '…!', 1.2)
+        ch.exclaim = 0.8
       }
     }
-    if (d < MOUSE_HAPPY) ch.happy = 0.3
+    if (d < MOUSE_HAPPY) {
+      ch.happy = 0.3
+      ch.love = Math.max(ch.love, 0.4) // 쓰다듬으면 하트
+    }
   }
 
   ch.actionT -= dt
@@ -371,7 +389,15 @@ function stepGround(world, ch, dt) {
       if (ch.actionT <= 0) {
         const j = ch.jump
         ch.jump = null
-        leave(ch, j ? j.vx : 0, j ? j.vy : -castOf(ch.kind).hop)
+        const vy = j ? j.vy : -castOf(ch.kind).hop
+        // 공중제비: 떠 있는 동안 정확히 한 바퀴 돌게 회전 속도를 맞춘다.
+        const spin = castOf(ch.kind).spin || 0
+        if (spin > 0 && rand(world) < spin) {
+          const T = j && j.T ? j.T : (2 * -vy) / GRAVITY
+          ch.spin = (ch.facing || 1) * (Math.PI * 2) / Math.max(0.3, T)
+          if (rand(world) < 0.5) say(ch, castOf(ch.kind).lines[1] || '야하!', 1.2)
+        }
+        leave(ch, j ? j.vx : 0, vy)
       }
       break
     default:
@@ -382,9 +408,11 @@ function stepGround(world, ch, dt) {
 function setAction(world, ch, action, t) {
   ch.action = action
   ch.actionT = t
+  ch.actionAge = 0
 }
 
 function startWalk(ch, targetRel) {
+  ch.actionAge = 0
   ch.action = 'walk'
   ch.actionT = 30
   ch.target = targetRel
@@ -397,6 +425,7 @@ function say(ch, text, t = 2.2) {
 
 /** 땅에서 떨어진다(뛰기·뛰어내리기). */
 function leave(ch, vx, vy) {
+  ch.airT = 0
   ch.mode = 'air'
   ch.win = null
   ch.vx = vx
@@ -443,7 +472,18 @@ function decide(world, ch, win, segs, seg) {
     ['talk', 0.9],
     ['jump', jumpTarget ? 1.6 * cast.jumpy : 0],
     ['drop', atWinEdge ? 0.25 * cast.jumpy : 0],
+    ...Object.entries(cast.moves || {}).map(([move, w]) => [move, w * 0.7]),
   ])
+
+  if (MOVES[choice]) {
+    const move = MOVES[choice]
+    setAction(world, ch, choice, between(world, move.t[0], move.t[1]))
+    if (choice === 'eat') ch.prop = pick(world, cast.food || ['🍙'])
+    if (choice === 'drink') ch.prop = '🍺'
+    if (choice === 'train') ch.prop = '🗡️'
+    if (move.line) say(ch, move.line, 1.6)
+    return
+  }
 
   switch (choice) {
     case 'walk': {
@@ -470,7 +510,7 @@ function decide(world, ch, win, segs, seg) {
       break
     case 'jump':
       ch.facing = jumpTarget.vx < 0 ? -1 : 1
-      ch.jump = { vx: jumpTarget.vx, vy: jumpTarget.vy }
+      ch.jump = { vx: jumpTarget.vx, vy: jumpTarget.vy, T: jumpTarget.T }
       setAction(world, ch, 'crouch', CROUCH)
       break
     case 'drop': {
@@ -527,6 +567,7 @@ export function ballistic(x0, y0, x1, y1) {
 
 function stepAir(world, ch, dt) {
   const prevY = ch.y
+  ch.airT += dt
   // 중력이 일정하니 정확한 식으로 적분한다. vy 를 먼저 더하는 오일러는 한 번 뛸 때마다
   // v·dt/2 (튀어나올 때 16px 남짓) 덜 솟아서, 계산한 꼭짓점·착지점에 못 닿는다.
   ch.x += ch.vx * dt
@@ -560,6 +601,8 @@ function stepAir(world, ch, dt) {
 }
 
 function land(world, ch, win) {
+  ch.spin = 0
+  ch.airT = 0
   ch.mode = 'ground'
   ch.win = win.id
   ch.relX = ch.x - win.x
@@ -591,6 +634,7 @@ function socialize(world, dt) {
       for (const ch of [a, b]) {
         ch.facing = (ch === a ? b.x - a.x : a.x - b.x) < 0 ? -1 : 1
         setAction(world, ch, 'cheer', 1.4)
+        ch.love = 1.4
       }
       say(a, pick(world, castOf(a.kind).lines), 1.6)
       return

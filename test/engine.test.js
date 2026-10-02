@@ -221,6 +221,54 @@ describe('창에서 창으로', () => {
   })
 })
 
+describe('특기와 공중제비', () => {
+  it('오래 두면 아이마다 자기 특기를 한다 (치이카와 풀 뽑기, 하치와레 노래, 쿠리만쥬 한 잔 …)', () => {
+    const world = createWorld({ seed: 21, maxChars: 7 })
+    const wins = [0, 1, 2, 3, 4, 5, 6].map((i) => ({ id: i + 1, x: 20 + i * 200, y: 150 + (i % 3) * 200, w: 190, h: 120 }))
+    setWindows(world, wins)
+    const seen = new Map()
+    for (let i = 0; i < 60 * 400; i++) {
+      step(world)
+      for (const ch of world.chars) {
+        if (!seen.has(ch.kind)) seen.set(ch.kind, new Set())
+        seen.get(ch.kind).add(ch.action)
+      }
+    }
+    expect(seen.get('chiikawa')).toContain('weed')
+    expect(seen.get('hachiware')).toContain('sing')
+    expect(seen.get('usagi')).toContain('dance')
+    expect(seen.get('kurimanju')).toContain('drink')
+    expect(seen.get('rakko')).toContain('train')
+    expect(seen.get('momonga')).toContain('pose')
+  })
+
+  it('공중제비는 뜬 동안 딱 한 바퀴 돌고, 내려앉으면 멈춘다', () => {
+    const world = createWorld({ seed: 2, maxChars: 1 })
+    setWindows(world, [A])
+    run(world, 3)
+    const ch = world.chars[0]
+    ch.kind = 'usagi'
+    ch.mode = 'ground'
+    ch.win = A.id
+    ch.relX = 300
+    let spun = null
+    for (let tries = 0; tries < 50 && spun == null; tries++) {
+      ch.action = 'crouch'
+      ch.actionT = 0.001
+      ch.jump = null
+      step(world)
+      step(world)
+      if (ch.mode === 'air' && ch.spin) spun = ch.spin
+      while (ch.mode === 'air') step(world)
+    }
+    expect(spun).not.toBe(null)
+    // 제자리 뛰기: 떠 있는 시간 2·hop/g 동안 2π.
+    expect(Math.abs(spun) * (2 * 620 / GRAVITY)).toBeCloseTo(Math.PI * 2, 5)
+    expect(ch.mode).toBe('ground')
+    expect(ch.spin).toBe(0)
+  })
+})
+
 describe('결정론', () => {
   it('같은 시드 같은 입력이면 같은 결과', () => {
     const go = () => {

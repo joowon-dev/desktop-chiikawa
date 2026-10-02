@@ -5,7 +5,11 @@
 
 import { STEP } from '../game/constants.js'
 import { createWorld, drainEvents, resize, setKinds, setMaxChars, setMouse, setWindows, step } from '../game/engine.js'
-import { EFFECT_LIFE, drawBubble, drawChar, drawEffect, drawZzz, setScale, setSprite } from '../render/draw.js'
+import {
+  EFFECT_LIFE, drawBubble, drawChar, drawEffect, drawExclaim, drawProp, drawZzz, setScale, setSprite,
+} from '../render/draw.js'
+import * as fx from '../render/fx.js'
+import { segmentAt } from '../game/surfaces.js'
 import { startDemo } from './demo.js'
 
 const canvas = document.getElementById('stage')
@@ -146,33 +150,39 @@ let acc = 0
 
 function frame(now) {
   // 잠들었다 깨면(창이 숨었다 보이면) 밀린 시간을 한꺼번에 돌리지 않는다.
-  acc += Math.min(0.25, (now - last) / 1000)
+  const dt = Math.min(0.25, (now - last) / 1000)
+  acc += dt
   last = now
   while (acc >= STEP) {
     step(world)
     acc -= STEP
   }
-  for (const e of drainEvents(world)) effects.push({ ...e, age: 0, life: EFFECT_LIFE[e.type] || 0.4 })
-  for (const fx of effects) fx.age += (now - (fx.last ?? now)) / 1000
-  for (const fx of effects) fx.last = now
-
+  advance(dt)
   draw()
   requestAnimationFrame(frame)
-
-if (!bridge) {
-  // 데모 전용: 시간을 손으로 감는다. 탭이 뒤에 있으면 rAF 가 안 돌아서, 자동 확인할 때 쓴다.
-  window.__tick = (seconds) => {
-    for (let i = 0; i < Math.round(seconds / STEP); i++) step(world)
-    for (const e of drainEvents(world)) effects.push({ ...e, age: 0, life: EFFECT_LIFE[e.type] || 0.4 })
-    draw()
-  }
 }
+
+/** 효과를 dt 만큼 진행한다: 월드가 낸 사건을 받아 오고, 아이들을 보고 새로 뿌리고, 움직인다. */
+function advance(dt) {
+  for (const e of drainEvents(world)) {
+    effects.push({ ...e, age: 0, life: EFFECT_LIFE[e.type] || 0.4 })
+    if (e.type === 'pop') fx.burst('pop', e.x, e.y)
+  }
+  for (const e of effects) e.age += dt
+  fx.emit(world.chars, dt, visible)
+  fx.update(dt)
+}
+
+/** 이 아이가 지금 보이나 — 앞 창에 가린 아이에게서는 효과가 새 나오면 안 된다. */
+function visible(ch) {
+  if (ch.mode === 'air') return true
+  return !!segmentAt(world.segs.get(ch.win), ch.x)
 }
 
 /**
  * 뒤 창부터 앞 창 순서로: 그 창 자리를 비우고, 그 창 위에 선 아이들을 그린다.
  * 그러면 앞 창이 자기 자리를 비울 때 뒤 창 위 아이들의 가려진 부분이 같이 지워진다 —
- * 창이 아이를 가리는 것처럼 보인다. 날고 있는 아이는 마지막에, 모든 창 위에 그린다.
+ * 창이 아이를 가리는 것처럼 보인다. 날고 있는 아이와 효과는 마지막에, 모든 창 위에 그린다.
  */
 function draw() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
@@ -190,15 +200,24 @@ function draw() {
     ctx.clearRect(win.x, win.y, win.w, win.h)
     const list = ground.get(win.id)
     if (!list) continue
-    for (const ch of list) drawChar(ctx, ch)
+    for (const ch of list) {
+      drawChar(ctx, ch)
+      drawProp(ctx, ch)
+    }
     for (const ch of list) {
       drawZzz(ctx, ch)
+      drawExclaim(ctx, ch)
       drawBubble(ctx, ch)
     }
   }
 
-  for (const ch of world.chars) if (ch.mode === 'air') drawChar(ctx, ch)
+  for (const ch of world.chars) {
+    if (ch.mode !== 'air') continue
+    drawChar(ctx, ch)
+    drawExclaim(ctx, ch)
+  }
 
+  fx.draw(ctx)
   for (let i = effects.length - 1; i >= 0; i--) {
     if (effects[i].age >= effects[i].life) effects.splice(i, 1)
     else drawEffect(ctx, effects[i])
@@ -210,8 +229,11 @@ requestAnimationFrame(frame)
 if (!bridge) {
   // 데모 전용: 시간을 손으로 감는다. 탭이 뒤에 있으면 rAF 가 안 돌아서, 자동 확인할 때 쓴다.
   window.__tick = (seconds) => {
-    for (let i = 0; i < Math.round(seconds / STEP); i++) step(world)
-    for (const e of drainEvents(world)) effects.push({ ...e, age: 0, life: EFFECT_LIFE[e.type] || 0.4 })
+    const n = Math.round(seconds / STEP)
+    for (let i = 0; i < n; i++) {
+      step(world)
+      advance(STEP)
+    }
     draw()
   }
 }

@@ -96,5 +96,5 @@ export function startDemo({ onWindows, onMouse }) {
   add(140, 340, 560, 380)
   add(420, 140, 420, 260)
   // 디버그용 손잡이.
-  window.__demo = { add, closeFront, get wins() { return wins } }
+  window.__demo = { add, closeFront, publish, get wins() { return wins } }
 }
