@@ -12,12 +12,13 @@ import {
   BURST_GAP, CHAR_H, COVER_LIMIT, CROUCH, DEFAULT_MAX_CHARS, EDGE_MARGIN, FRIEND_DIST, GRAVITY,
   JUMP_REACH, JUMP_RISE, MOUSE_HAPPY, MOUSE_LOOK, POP_APEX, POP_DELAY, REPOP_DELAY, SHAKE_MOVE, STEP,
 } from './constants.js'
-import { CAST, KINDS } from './cast.js'
+import { KINDS, castOf } from './cast.js'
 import { between, pick, rand, weighted } from './rng.js'
 import { nearestVisible, segmentAt, standable, visibleLength, visibleSegments } from './surfaces.js'
 
-export function createWorld({ seed = 1, w = 1440, h = 900, maxChars = DEFAULT_MAX_CHARS } = {}) {
+export function createWorld({ seed = 1, w = 1440, h = 900, maxChars = DEFAULT_MAX_CHARS, kinds = KINDS } = {}) {
   return {
+    kinds: [...kinds],
     t: 0,
     rng: seed >>> 0,
     screen: { w, h },
@@ -217,13 +218,21 @@ function newChar(world, kind) {
   }
 }
 
-/** 화면에 제일 적게 나와 있는 종류. 같으면 KINDS 순서. */
+/** 화면에 제일 적게 나와 있는 종류. 같으면 world.kinds 순서. */
 function leastKind(world) {
-  const count = Object.fromEntries(KINDS.map((k) => [k, 0]))
-  for (const ch of world.chars) count[ch.kind]++
-  let best = KINDS[0]
-  for (const k of KINDS) if (count[k] < count[best]) best = k
+  const count = Object.fromEntries(world.kinds.map((k) => [k, 0]))
+  for (const ch of world.chars) if (ch.kind in count) count[ch.kind]++
+  let best = world.kinds[0]
+  for (const k of world.kinds) if (count[k] < count[best]) best = k
   return best
+}
+
+/**
+ * 나올 수 있는 아이들. 그림 폴더에 새 그림을 넣으면 렌더러가 여기에 더한다.
+ * 이미 나와 있는 아이 중 목록에서 빠진 종류는 그대로 둔다 — 갑자기 사라지면 이상하다.
+ */
+export function setKinds(world, kinds) {
+  if (kinds.length) world.kinds = [...kinds]
 }
 
 /** 서 있는 아이 수가 제일 적은 보이는 창. 같으면 앞 창. */
@@ -335,7 +344,7 @@ function stepGround(world, ch, dt) {
   switch (ch.action) {
     case 'walk': {
       const dir = Math.sign(ch.target - ch.relX)
-      const speed = CAST[ch.kind].speed
+      const speed = castOf(ch.kind).speed
       ch.facing = dir || ch.facing
       const move = speed * dt
       if (Math.abs(ch.target - ch.relX) <= move) {
@@ -362,7 +371,7 @@ function stepGround(world, ch, dt) {
       if (ch.actionT <= 0) {
         const j = ch.jump
         ch.jump = null
-        leave(ch, j ? j.vx : 0, j ? j.vy : -CAST[ch.kind].hop)
+        leave(ch, j ? j.vx : 0, j ? j.vy : -castOf(ch.kind).hop)
       }
       break
     default:
@@ -418,7 +427,7 @@ function relocate(world, ch) {
 
 /** 다음에 뭘 할지. */
 function decide(world, ch, win, segs, seg) {
-  const cast = CAST[ch.kind]
+  const cast = castOf(ch.kind)
   const jumpTarget = rand(world) < 0.5 ? findJump(world, ch, win) : null
   // 뛰어내릴 수 있는 끝: 앞 창에 가려서 끊긴 끝이 아니라 진짜 창 끝.
   const leftEdge = seg && Math.abs(seg[0] - (Math.max(win.x, 0) + EDGE_MARGIN)) < 1
@@ -561,7 +570,7 @@ function land(world, ch, win) {
   ch.coveredT = 0
   setAction(world, ch, 'idle', between(world, 0.5, 1.4))
   world.events.push({ type: ch.popping ? 'pop' : 'land', x: ch.x, y: ch.y, kind: ch.kind })
-  if (ch.popping && rand(world) < 0.6) say(ch, pick(world, CAST[ch.kind].lines), 1.8)
+  if (ch.popping && rand(world) < 0.6) say(ch, pick(world, castOf(ch.kind).lines), 1.8)
   ch.popping = false
 }
 
@@ -583,7 +592,7 @@ function socialize(world, dt) {
         ch.facing = (ch === a ? b.x - a.x : a.x - b.x) < 0 ? -1 : 1
         setAction(world, ch, 'cheer', 1.4)
       }
-      say(a, pick(world, CAST[a.kind].lines), 1.6)
+      say(a, pick(world, castOf(a.kind).lines), 1.6)
       return
     }
   }

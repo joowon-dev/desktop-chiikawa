@@ -4,8 +4,8 @@
 // 앱을 빌드하지 않고도 걷기·점프·가림을 눈으로 볼 수 있게.
 
 import { STEP } from '../game/constants.js'
-import { createWorld, drainEvents, resize, setMaxChars, setMouse, setWindows, step } from '../game/engine.js'
-import { EFFECT_LIFE, drawBubble, drawChar, drawEffect, drawZzz, setScale } from '../render/draw.js'
+import { createWorld, drainEvents, resize, setKinds, setMaxChars, setMouse, setWindows, step } from '../game/engine.js'
+import { EFFECT_LIFE, drawBubble, drawChar, drawEffect, drawZzz, setScale, setSprite } from '../render/draw.js'
 import { startDemo } from './demo.js'
 
 const canvas = document.getElementById('stage')
@@ -36,6 +36,73 @@ window.addEventListener('resize', () => {
   dpr = fit()
 })
 
+// ───────────────────────────────── 그림 폴더
+
+/**
+ * 그림 폴더의 그림을 불러온다. 파일 이름이 곧 아이 이름이다(chiikawa.png → chiikawa).
+ * 하나라도 불러오면 **그림이 있는 아이들만** 나온다 — 그림과 도형이 섞이면 어색하다.
+ * 불러오기 전에 이미 나와 있던 도형 아이들은 그대로 두고, 새로 나오는 아이부터 바뀐다.
+ */
+/**
+ * 둘레의 투명한 여백을 잘라 낸다. 여백째로 키를 맞추면 그림이 작아지고 발이 공중에 뜬다.
+ * 잘라 낼 게 없거나 읽을 수 없으면(교차 출처) 원래 그림을 그대로 쓴다.
+ */
+function trimmed(image) {
+  try {
+    const w = image.naturalWidth
+    const h = image.naturalHeight
+    const c = document.createElement('canvas')
+    c.width = w
+    c.height = h
+    const g = c.getContext('2d')
+    g.drawImage(image, 0, 0)
+    const data = g.getImageData(0, 0, w, h).data
+    let x0 = w, y0 = h, x1 = -1, y1 = -1
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (data[(y * w + x) * 4 + 3] > 12) {
+          if (x < x0) x0 = x
+          if (x > x1) x1 = x
+          if (y < y0) y0 = y
+          if (y > y1) y1 = y
+        }
+      }
+    }
+    if (x1 < 0 || (x0 === 0 && y0 === 0 && x1 === w - 1 && y1 === h - 1)) return image
+    const out = document.createElement('canvas')
+    out.width = x1 - x0 + 1
+    out.height = y1 - y0 + 1
+    out.getContext('2d').drawImage(c, x0, y0, out.width, out.height, 0, 0, out.width, out.height)
+    return out
+  } catch {
+    return image
+  }
+}
+
+function loadSprites(files) {
+  const loaded = new Set()
+  const kindOf = (file) => file.replace(/\.[^.]+$/, '').toLowerCase()
+  const jobs = files.map((file) => new Promise((resolve) => {
+    const kind = kindOf(file)
+    const image = new Image()
+    image.onload = () => {
+      setSprite(kind, trimmed(image))
+      loaded.add(kind)
+      resolve()
+    }
+    image.onerror = () => {
+      console.error(`그림을 못 읽었다: ${file}`)
+      resolve()
+    }
+    image.src = `../sprites/${encodeURIComponent(file)}`
+  }))
+  Promise.all(jobs).then(() => {
+    // 순서는 파일 목록 순서(셸이 이름순으로 준다). 적게 나온 아이부터 나오므로 순서는 동점일 때만 쓴다.
+    const kinds = [...new Set(files.map(kindOf))].filter((kind) => loaded.has(kind))
+    if (kinds.length) setKinds(world, kinds)
+  })
+}
+
 // ───────────────────────────────── 셸 ↔ 월드
 
 /** 셸이 주는 창은 [id, x, y, w, h] 배열이다(짧게 보내려고). 앞에서 뒤 순서. */
@@ -49,6 +116,7 @@ if (bridge) {
     setMouse(world, mouse ? { x: mouse[0], y: mouse[1] } : null)
   })
   bridge.onMaxChars((n) => setMaxChars(world, n))
+  loadSprites(bridge.sprites || [])
   if (bridge.scale) setScale(bridge.scale)
   bridge.onScale(setScale)
   bridge.send({ type: 'ready' })
@@ -62,6 +130,8 @@ if (bridge) {
   }
 } else {
   window.__world = world // 데모에서만. 콘솔로 들여다보려고.
+  // 데모에서는 src/sprites/index.json 에 파일 이름 목록을 적어 두면 그걸 쓴다.
+  fetch('../sprites/index.json').then((r) => (r.ok ? r.json() : [])).then(loadSprites).catch(() => {})
   startDemo({
     onWindows: applyWindows,
     onMouse: (m) => setMouse(world, m),

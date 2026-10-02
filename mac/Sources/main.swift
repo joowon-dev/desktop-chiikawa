@@ -40,9 +40,38 @@ func debugLog(_ text: String) {
     FileHandle.standardError.write("[chiikawa] \(text)\n".data(using: .utf8)!)
 }
 
+// MARK: - 그림 폴더
+
+/// 캐릭터 그림을 넣는 폴더. ~/Library/Application Support/DesktopChiikawa/sprites
+/// 앱 번들에는 그림을 싣지 않는다 — 주인이 자기 컴퓨터에 넣은 그림만 쓴다.
+let spritesDirectory: URL = {
+    let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    return support.appendingPathComponent("DesktopChiikawa/sprites", isDirectory: true)
+}()
+
+private let spriteExtensions: Set<String> = ["png", "gif", "webp"]
+
+/// 폴더 안의 그림 파일 이름들(이름순).
+func spriteFiles() -> [String] {
+    let names = (try? FileManager.default.contentsOfDirectory(atPath: spritesDirectory.path)) ?? []
+    return names.filter { spriteExtensions.contains(($0 as NSString).pathExtension.lowercased()) }.sorted()
+}
+
+private let spritesGuide = """
+여기에 캐릭터 그림을 넣으면 바탕화면 치이카와가 그 그림으로 나옵니다.
+
+• 파일 이름이 곧 캐릭터 이름입니다. 예) chiikawa.png  hachiware.png  usagi.png
+  momonga.png  kurimanju.png  rakko.png  shisa.png  — 이 일곱은 성격(속도·점프·대사)이 정해져 있고,
+  그 밖의 이름(예: kani.png, furuhonya.png)도 넣으면 새 친구로 나옵니다.
+• 배경이 투명한 PNG 가 좋습니다(GIF·WEBP 도 됩니다). 발이 그림 맨 아래에 닿게 잘라 주세요.
+• 그림이 하나라도 있으면 그림이 있는 캐릭터만 나옵니다.
+• 넣은 뒤 메뉴바 아이콘 → 「그림 다시 불러오기」.
+"""
+
 // MARK: - 번들 안의 웹 파일을 넘겨주는 핸들러
 
 /// file:// 로 열면 ES 모듈 import 가 막힌다. 커스텀 스킴으로 번들 Resources/web 을 내준다.
+/// /sprites/… 는 번들이 아니라 그림 폴더(spritesDirectory)에서 내준다.
 final class WebAssetHandler: NSObject, WKURLSchemeHandler {
     private let root: URL
 
@@ -52,20 +81,28 @@ final class WebAssetHandler: NSObject, WKURLSchemeHandler {
 
     private static let mimeTypes = [
         "html": "text/html", "js": "text/javascript", "css": "text/css",
-        "json": "application/json", "png": "image/png",
+        "json": "application/json", "png": "image/png", "gif": "image/gif",
+        "webp": "image/webp", "jpg": "image/jpeg", "jpeg": "image/jpeg",
     ]
 
     func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
         guard let url = task.request.url else { return }
         let relative = url.path.isEmpty || url.path == "/" ? "/renderer/index.html" : url.path
-        let file = root.appendingPathComponent(relative).standardized
+        var base = root
+        var path = relative
+        if relative.hasPrefix("/sprites/") {
+            base = spritesDirectory
+            path = String(relative.dropFirst("/sprites".count))
+        }
+        let file = base.appendingPathComponent(path).standardized
 
-        guard file.path.hasPrefix(root.path), let data = try? Data(contentsOf: file) else {
+        // 그 폴더 밖으로 나가는 경로는 거절한다.
+        guard file.path.hasPrefix(base.standardized.path), let data = try? Data(contentsOf: file) else {
             task.didFailWithError(URLError(.fileDoesNotExist))
             return
         }
 
-        let mime = Self.mimeTypes[file.pathExtension] ?? "application/octet-stream"
+        let mime = Self.mimeTypes[file.pathExtension.lowercased()] ?? "application/octet-stream"
         let response = URLResponse(url: url, mimeType: mime,
                                    expectedContentLength: data.count, textEncodingName: "utf-8")
         task.didReceive(response)
@@ -172,6 +209,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
           scale: \(scale),
           debug: \(ProcessInfo.processInfo.environment["CHIIKAWA_DEBUG"] != nil),
           onScale: (handler) => { window.__ckScale = handler },
+          sprites: \(jsonString(spriteFiles())),
           onWindows: (handler) => { window.__ckWindows = (data) => handler(data.w, data.m) },
           onMaxChars: (handler) => { window.__ckMaxChars = handler },
           send: (message) => window.webkit.messageHandlers.chiikawa.postMessage(message),
@@ -183,6 +221,36 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
           type: 'log', text: args.join(' '),
         })
         """
+    }
+
+    private func jsonString(_ value: [String]) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: value),
+              let json = String(data: data, encoding: .utf8) else { return "[]" }
+        return json
+    }
+
+    // MARK: 그림 폴더
+
+    @objc private func openSpritesFolder() {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: spritesDirectory, withIntermediateDirectories: true)
+        let guide = spritesDirectory.appendingPathComponent("읽어 주세요.txt")
+        if !fm.fileExists(atPath: guide.path) {
+            try? spritesGuide.write(to: guide, atomically: true, encoding: .utf8)
+        }
+        NSWorkspace.shared.open(spritesDirectory)
+    }
+
+    /// 그림 목록은 문서 시작에 주입하는 스크립트에 들어 있다. 스크립트를 새로 끼우고 다시 연다.
+    @objc private func reloadSprites() {
+        let controller = webView.configuration.userContentController
+        controller.removeAllUserScripts()
+        controller.addUserScript(
+            WKUserScript(source: bridgeScript(), injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        )
+        ready = false
+        webView.reload()
+        refreshMenu()
     }
 
     // MARK: 창 자리 묻기
@@ -254,6 +322,16 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
 
         menu.addItem(countMenu())
         menu.addItem(scaleMenu())
+        menu.addItem(.separator())
+
+        let count = spriteFiles().count
+        let folder = NSMenuItem(title: count > 0 ? "캐릭터 그림 폴더 열기… (\(count)장)" : "캐릭터 그림 폴더 열기…",
+                                action: #selector(openSpritesFolder), keyEquivalent: "")
+        folder.target = self
+        menu.addItem(folder)
+        let reload = NSMenuItem(title: "그림 다시 불러오기", action: #selector(reloadSprites), keyEquivalent: "")
+        reload.target = self
+        menu.addItem(reload)
         if NSScreen.screens.count > 1 { menu.addItem(screenMenu()) }
         menu.addItem(.separator())
 

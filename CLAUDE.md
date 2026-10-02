@@ -23,7 +23,23 @@ CHIIKAWA_DEBUG=1 dist/mac/Chiikawa.app/Contents/MacOS/DesktopChiikawa   # 3 초�
 | 조작 | 하는 일 |
 |---|---|
 | `⌥⇧K` | 숨기기 / 보이기 |
-| 메뉴바 아이콘 | 몇 마리까지(1·2·4·8·12) · 크기 · 모니터 · 종료 |
+| 메뉴바 아이콘 | 몇 마리까지(1·2·4·8·12) · 크기 · 캐릭터 그림 폴더 열기 · 그림 다시 불러오기 · 모니터 · 종료 |
+
+## 캐릭터 그림 폴더
+
+`~/Library/Application Support/DesktopChiikawa/sprites/` 에 그림(PNG·GIF·WEBP)을 넣으면 도형 대신
+그 그림으로 나온다. **파일 이름이 곧 아이 이름**이다(`chiikawa.png` → chiikawa). 성격이 정해진
+일곱(`cast.js` 의 `KINDS`) 밖의 이름도 넣으면 기본 성격의 새 친구로 나온다.
+
+- 그림이 **하나라도** 있으면 그림 있는 아이들만 나온다(도형과 섞지 않는다).
+- 둘레의 투명 여백은 불러올 때 잘라 낸다(`trimmed`). 키는 50px × 크기 배율로 맞춘다.
+- 그림 하나로 모든 자세를 낸다 — 걷기·점프·착지·휘청은 늘이고 줄이고 기울이는 것뿐이고,
+  표정·팔·Zz 는 그림에 없으므로 자는 아이는 Zz 만 뜬다.
+- 셸은 파일 목록을 `window.sneaky.sprites` 로 넘기고 `/sprites/…` 를 그 폴더에서 내준다.
+  목록은 문서 시작에 주입하는 스크립트에 들어 있어서 「다시 불러오기」는 스크립트를 갈아
+  끼우고 웹뷰를 다시 연다.
+- **공식 그림은 저장소와 앱 번들에 넣지 않는다.** 주인이 자기 컴퓨터에 넣는 것만 쓴다
+  (`src/sprites/` 는 브라우저 데모용이고 gitignore 되어 있다 — `index.json` 에 파일 이름 배열).
 
 ---
 
@@ -33,8 +49,8 @@ CHIIKAWA_DEBUG=1 dist/mac/Chiikawa.app/Contents/MacOS/DesktopChiikawa   # 3 초�
 |---|---|
 | `src/game/engine.js` | 월드. 창 목록 → 튀어나오기 예약, 아이들의 상태(ground/air/gone)와 행동 |
 | `src/game/surfaces.js` | 창 윗변 중 **실제로 보이는 구간** 계산 |
-| `src/game/cast.js` | 네 아이의 성격(속도·점프력·대사) |
-| `src/render/draw.js` | 캔버스 도형으로 그리기. 그림 파일이 없다 |
+| `src/game/cast.js` | 일곱 아이의 성격(속도·점프력·대사). 모르는 이름은 `castOf` 가 기본값 |
+| `src/render/draw.js` | 캔버스 도형으로 그리기(치이카와·하치와레·우사기·모몽가·쿠리만쥬·랏코·시사). 그림이 있으면 그림 |
 | `src/renderer/app.js` | 셸 ↔ 월드, 고정 타임스텝, 그리는 순서(가림) |
 | `src/renderer/demo.js` | 브라우저 전용 가짜 창 |
 | `mac/Sources/main.swift` | 오버레이 창, 창 위치 폴링, 핫키, 메뉴 |

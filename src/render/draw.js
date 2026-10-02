@@ -12,6 +12,33 @@ const LOOKS = {
   hachiware: { body: '#ffffff', eye: 2.3, cap: '#7f9fcc' },
   usagi: { body: '#f9e7a4', eye: 1.7 },
   momonga: { body: '#ffffff', eye: 3.1 },
+  kurimanju: { body: '#f4ddb6', eye: 2.0, cap: '#b7794a' },
+  rakko: { body: '#b8a294', eye: 1.9, muzzle: '#f1e8de' },
+  shisa: { body: '#f4c96f', eye: 2.4, mane: '#d98f3a' },
+}
+
+/**
+ * 그림 폴더에서 불러온 그림. 있으면 도형 대신 이걸 그린다. 그림 하나로 걷기·뛰기·앉기를
+ * 다 하므로 자세는 늘이고 줄이고 기울이는 것(pose)으로만 낸다.
+ */
+const sprites = new Map()
+export function setSprite(kind, image) {
+  sprites.set(kind, image)
+}
+export function hasDrawing(kind) {
+  return sprites.has(kind) || kind in LOOKS
+}
+
+/** 그림 높이(px, 배율 1 기준). 도형 아이들과 키를 맞춘다. */
+const SPRITE_H = 50
+
+function drawSprite(ctx, ch, image, p) {
+  const h = SPRITE_H
+  const w = (image.width / image.height) * h // 캔버스(여백을 자른 것)든 Image 든
+  ctx.translate(0, -p.lift)
+  ctx.rotate(p.rot)
+  ctx.scale(p.sx * (ch.facing < 0 ? -1 : 1), p.sy)
+  ctx.drawImage(image, -w / 2, -h, w, h)
 }
 
 function ellipse(ctx, x, y, rx, ry, rot = 0) {
@@ -117,6 +144,13 @@ export function drawChar(ctx, ch) {
     ctx.fill()
   }
 
+  const image = sprites.get(ch.kind)
+  if (image) {
+    drawSprite(ctx, ch, image, p)
+    ctx.restore()
+    return
+  }
+
   ctx.translate(0, -p.lift)
   ctx.rotate(p.rot)
   ctx.scale(p.sx * (ch.facing < 0 ? -1 : 1), p.sy)
@@ -156,6 +190,8 @@ export function drawChar(ctx, ch) {
   ellipse(ctx, 0, -27, 18.5, 15.5)
   fillStroke(ctx, look.body)
   if (ch.kind === 'hachiware') drawHachiwareCap(ctx, look)
+  if (ch.kind === 'kurimanju') drawKurimanjuTop(ctx, look)
+  if (ch.kind === 'rakko') drawRakkoFace(ctx, look)
 
   drawFace(ctx, ch, look)
 
@@ -194,6 +230,26 @@ function drawEars(ctx, kind, look, ch) {
       }
       break
     }
+    case 'kurimanju':
+      for (const s of [-1, 1]) {
+        ellipse(ctx, s * 11, -39, 4.6, 4.2)
+        fillStroke(ctx, look.cap)
+      }
+      break
+    case 'rakko':
+      for (const s of [-1, 1]) {
+        ellipse(ctx, s * 14, -36, 3.6, 3.4)
+        fillStroke(ctx, look.body)
+      }
+      break
+    case 'shisa':
+      // 머리를 둘러싼 곱슬 갈기.
+      for (let i = 0; i < 9; i++) {
+        const a = Math.PI * (0.95 + (i / 8) * 1.1)
+        ellipse(ctx, Math.cos(a) * 18, -27 + Math.sin(a) * 15.5, 5.2, 5.2)
+        fillStroke(ctx, look.mane)
+      }
+      break
     case 'momonga':
       // 옆으로 넓게 벌어진 귀.
       for (const s of [-1, 1]) {
@@ -233,6 +289,34 @@ function drawHachiwareCap(ctx, look) {
   // 테두리를 다시 그어 무늬 위로 선이 살게.
   ellipse(ctx, 0, -27, 18.5, 15.5)
   ctx.stroke()
+}
+
+/** 쿠리만쥬: 밤만쥬처럼 머리 위가 구운 갈색. */
+function drawKurimanjuTop(ctx, look) {
+  ctx.save()
+  ellipse(ctx, 0, -27, 18.5, 15.5)
+  ctx.clip()
+  ellipse(ctx, 0, -44, 26, 13)
+  ctx.fillStyle = look.cap
+  ctx.fill()
+  ctx.restore()
+  ellipse(ctx, 0, -27, 18.5, 15.5)
+  ctx.stroke()
+}
+
+/** 랏코: 입 둘레가 밝고, 눈썹이 진하다. */
+function drawRakkoFace(ctx, look) {
+  ellipse(ctx, 0, -21.5, 8, 5.5)
+  ctx.fillStyle = look.muzzle
+  ctx.fill()
+  ctx.lineWidth = 1.6
+  for (const s of [-1, 1]) {
+    ctx.beginPath()
+    ctx.moveTo(s * 3.8, -32.5)
+    ctx.lineTo(s * 8.8, -31.5)
+    ctx.stroke()
+  }
+  ctx.lineWidth = 1.5
 }
 
 function drawMomongaTail(ctx, look, ch) {
