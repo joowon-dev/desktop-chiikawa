@@ -1,0 +1,41 @@
+<!doctype html>
+<!-- 앱 아이콘·메뉴바 아이콘을 게임과 같은 그리기 함수로 뽑는다. scripts/make-icons.sh 가 연다.
+     ?tray 면 메뉴바용 검은 실루엣 한 마리. -->
+<html><body style="margin:0;background:transparent">
+<canvas id="c"></canvas>
+<script type="module">
+import { drawChar } from '../src/render/draw.js'
+const tray = location.search.includes('tray')
+const size = tray ? 64 : 1024
+const c = document.getElementById('c')
+c.width = c.height = size
+const ctx = c.getContext('2d')
+const ch = (kind, x, id, facing) => ({ id, kind, x, y: 0, mode: 'ground', action: 'idle', anim: 0.5,
+  facing, squash: 0, shake: 0, happy: 0, say: null, vy: 0 })
+if (tray) {
+  ctx.translate(32, 60); ctx.scale(1.2, 1.2)
+  drawChar(ctx, ch('chiikawa', 0, 1, 1))
+  // 템플릿 이미지: 모양만 남기고 까맣게.
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.globalCompositeOperation = 'source-in'
+  ctx.fillStyle = '#000'
+  ctx.fillRect(0, 0, size, size)
+} else {
+  // 둥근 사각 바탕 + 창 하나 + 그 위의 셋.
+  ctx.fillStyle = '#cfe6ff'
+  ctx.beginPath(); ctx.roundRect(100, 100, 824, 824, 180); ctx.fill()
+  ctx.fillStyle = '#ffffff'
+  ctx.beginPath(); ctx.roundRect(170, 600, 684, 260, 36); ctx.fill()
+  ctx.fillStyle = '#eceef3'
+  ctx.beginPath(); ctx.roundRect(170, 600, 684, 64, [36, 36, 0, 0]); ctx.fill()
+  for (const [i, col] of ['#ff5f57', '#febc2e', '#28c840'].entries()) {
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(220 + i * 44, 632, 13, 0, 7); ctx.fill()
+  }
+  ctx.save(); ctx.translate(0, 600); ctx.scale(5.2, 5.2)
+  drawChar(ctx, ch('hachiware', 58, 2, 1))
+  drawChar(ctx, ch('chiikawa', 98, 3, 1))
+  drawChar(ctx, ch('usagi', 138, 4, -1))
+  ctx.restore()
+}
+document.title = 'ready'
+</script></body></html>

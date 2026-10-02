@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>Chiikawa</string>
+  <key>CFBundleDisplayName</key>
+  <string>바탕화면 치이카와</string>
+  <key>CFBundleIdentifier</key>
+  <string>dev.joowonkoh.desktop-chiikawa</string>
+  <key>CFBundleExecutable</key>
+  <string>DesktopChiikawa</string>
+  <key>CFBundleIconFile</key>
+  <string>icon</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.1.0</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.0</string>
+  <!-- Dock 아이콘도 메뉴 막대 메뉴도 없는 보조 앱. 조작은 상태 아이콘으로만 한다. -->
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+</dict>
+</plist>
