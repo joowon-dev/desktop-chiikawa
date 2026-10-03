@@ -550,9 +550,37 @@ final class App: NSObject, NSApplicationDelegate {
 
     // MARK: 창 자리 묻기
 
+    /// 지난번에 물어본 창 목록. 한가할 때는 이걸 다시 쓴다.
+    private var cachedWindows: [(id: Int, rect: CGRect)] = []
+    private var cachedKey = ""
+    private var lastWindowChange = Date.distantPast
+    private var pollTick = 0
+
     /// 화면에 떠 있는 보통 창들을 앞에서 뒤 순서로 **한 번만** 묻고, 모니터마다 나눠 준다.
+    ///
+    /// **늘 30번 묻지 않는다.** 창 목록을 묻는 일(CGWindowListCopyWindowInfo)이 이 셸에서 제일
+    /// 비싸다. 창이 1.5 초 넘게 그대로면 네 번에 한 번(초당 7.5번)만 묻는다 — 창을 끌기 시작하면
+    /// 길어야 0.13 초 안에 알아채고 다시 30번으로 돌아간다. 마우스 위치는 싸서 매번 읽는다.
     func poll() {
         guard visible, overlays.contains(where: { $0.ready }) else { return }
+        pollTick &+= 1
+        let idle = Date().timeIntervalSince(lastWindowChange) > 1.5
+        // 한가하면 마우스도 초당 15번이면 된다(아이들이 쳐다보는 데 쓴다).
+        if idle && pollTick % 2 == 1 && !cachedKey.isEmpty { return }
+        if !idle || pollTick % 4 == 0 || cachedKey.isEmpty {
+            let windows = queryWindows()
+            let key = windows.map { "\($0.id):\($0.rect)" }.joined(separator: ";")
+            if key != cachedKey {
+                cachedKey = key
+                lastWindowChange = Date()
+            }
+            cachedWindows = windows
+        }
+        let mouse = NSEvent.mouseLocation
+        for overlay in overlays { overlay.send(windows: cachedWindows, mouse: mouse) }
+    }
+
+    private func queryWindows() -> [(id: Int, rect: CGRect)] {
         var windows: [(id: Int, rect: CGRect)] = []
         let ownPID = Int(ProcessInfo.processInfo.processIdentifier)
         if let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
@@ -570,8 +598,7 @@ final class App: NSObject, NSApplicationDelegate {
                 windows.append((number, bounds))
             }
         }
-        let mouse = NSEvent.mouseLocation
-        for overlay in overlays { overlay.send(windows: windows, mouse: mouse) }
+        return windows
     }
 
     // MARK: 메뉴바

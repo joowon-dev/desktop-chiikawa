@@ -42,24 +42,25 @@ window.addEventListener('resize', () => {
 
 // ───────────────────────────────── 그림 폴더
 
-/**
- * 그림 폴더의 그림을 불러온다. 파일 이름이 곧 아이 이름이다(chiikawa.png → chiikawa).
- * 하나라도 불러오면 **그림이 있는 아이들만** 나온다 — 그림과 도형이 섞이면 어색하다.
- * 불러오기 전에 이미 나와 있던 도형 아이들은 그대로 두고, 새로 나오는 아이부터 바뀐다.
- */
+/** 그림 긴 변의 최대 길이(px). 화면에는 60px 남짓으로 그려진다. */
+const SPRITE_MAX = 512
+
 /**
  * 둘레의 투명한 여백을 잘라 낸다. 여백째로 키를 맞추면 그림이 작아지고 발이 공중에 뜬다.
  * 잘라 낼 게 없거나 읽을 수 없으면(교차 출처) 원래 그림을 그대로 쓴다.
  */
 function trimmed(image) {
   try {
-    const w = image.naturalWidth
-    const h = image.naturalHeight
+    // 먼저 줄인다. 화면에는 60px 남짓으로 그려지는데, 4000px 사진을 그대로 훑으면
+    // 픽셀 1200만 개를 도느라 켜질 때 멈칫한다.
+    const k = Math.min(1, SPRITE_MAX / Math.max(image.naturalWidth, image.naturalHeight))
+    const w = Math.max(1, Math.round(image.naturalWidth * k))
+    const h = Math.max(1, Math.round(image.naturalHeight * k))
     const c = document.createElement('canvas')
     c.width = w
     c.height = h
-    const g = c.getContext('2d')
-    g.drawImage(image, 0, 0)
+    const g = c.getContext('2d', { willReadFrequently: true })
+    g.drawImage(image, 0, 0, w, h)
     const data = g.getImageData(0, 0, w, h).data
     let x0 = w, y0 = h, x1 = -1, y1 = -1
     for (let y = 0; y < h; y++) {
@@ -72,7 +73,8 @@ function trimmed(image) {
         }
       }
     }
-    if (x1 < 0 || (x0 === 0 && y0 === 0 && x1 === w - 1 && y1 === h - 1)) return image
+    if (x1 < 0) return image
+    if (x0 === 0 && y0 === 0 && x1 === w - 1 && y1 === h - 1) return k < 1 ? c : image
     const out = document.createElement('canvas')
     out.width = x1 - x0 + 1
     out.height = y1 - y0 + 1
@@ -83,6 +85,11 @@ function trimmed(image) {
   }
 }
 
+/**
+ * 그림 폴더의 그림을 불러온다. 파일 이름이 곧 아이 이름이다(chiikawa.png → chiikawa).
+ * 하나라도 불러오면 **그림이 있는 아이들만** 나온다 — 그림과 도형이 섞이면 어색하다.
+ * 불러오기 전에 이미 나와 있던 도형 아이들은 그대로 두고, 새로 나오는 아이부터 바뀐다.
+ */
 function loadSprites(files) {
   const loaded = new Set()
   const kindOf = (file) => file.replace(/\.[^.]+$/, '').toLowerCase()
@@ -104,6 +111,7 @@ function loadSprites(files) {
     // 순서는 파일 목록 순서(셸이 이름순으로 준다). 적게 나온 아이부터 나오므로 순서는 동점일 때만 쓴다.
     const kinds = [...new Set(files.map(kindOf))].filter((kind) => loaded.has(kind))
     if (kinds.length) setKinds(world, kinds)
+    if (bridge?.debug) bridge.send({ type: 'log', text: `그림 ${files.length}장 중 ${kinds.length}장 불러옴: ${kinds.join(', ')}` })
   })
 }
 
@@ -113,7 +121,13 @@ function loadSprites(files) {
  * 셸이 주는 창은 [id, x, y, w, h, dock?] 배열이다(짧게 보내려고). 앞에서 뒤 순서.
  * dock 이 1 이면 작업 표시줄(윈도우 셸만 보낸다).
  */
+let lastWindowsKey = ''
 function applyWindows(list) {
+  // 셸은 마우스만 움직여도 보낸다. 창이 정말 바뀐 때만 「바쁨」으로 친다.
+  const key = JSON.stringify(list)
+  if (key === lastWindowsKey) return
+  lastWindowsKey = key
+  windowsChangedAt = performance.now()
   setWindows(world, list.map(([id, x, y, w, h, dock]) => ({ id, x, y, w, h, dock: dock === 1 })))
 }
 
@@ -150,6 +164,25 @@ if (bridge) {
 const effects = []
 let last = performance.now()
 let acc = 0
+let sinceDraw = 0
+let drewSomething = true
+/** 창 목록이 마지막으로 바뀐 때(performance.now). 창을 끄는 동안은 매 프레임 그린다. */
+let windowsChangedAt = 0
+
+/**
+ * 그리는 빠르기. **늘 60번 그리지 않는다** — 켜 두고 사는 앱이라 배터리가 중요하다.
+ * 화면 전체(레티나 3456×2234)를 비우고 다시 칠하는 것이 이 앱에서 제일 비싼 일이고,
+ * 서서 숨쉬거나 걷는 것은 30번이면 충분히 부드럽다. 날고 있거나(튀어나옴·점프·낙하),
+ * 창이 끌리는 중이거나, 휘청이는 동안만 60번 그린다. 아무도 없으면 아예 안 그린다.
+ * (월드는 그리는 빠르기와 상관없이 고정 타임스텝으로 돈다 — 결정론은 그대로다.)
+ */
+const IDLE_FRAME = 1 / 30
+
+function busy(now) {
+  if (now - windowsChangedAt < 600) return true
+  for (const ch of world.chars) if (ch.mode === 'air' || ch.shake > 0) return true
+  return effects.length > 0
+}
 
 function frame(now) {
   // 잠들었다 깨면(창이 숨었다 보이면) 밀린 시간을 한꺼번에 돌리지 않는다.
@@ -160,8 +193,22 @@ function frame(now) {
     step(world)
     acc -= STEP
   }
-  advance(dt)
-  draw()
+  sinceDraw += dt
+  const nobody = world.chars.length === 0 && effects.length === 0 && fx.count() === 0
+  if (nobody) {
+    // 다 떠났다. 마지막으로 한 번 비우고 쉰다.
+    if (drewSomething) {
+      advance(sinceDraw)
+      draw()
+      drewSomething = false
+    }
+    sinceDraw = 0
+  } else if (busy(now) || sinceDraw >= IDLE_FRAME - 0.002) {
+    advance(sinceDraw)
+    draw()
+    drewSomething = true
+    sinceDraw = 0
+  }
   requestAnimationFrame(frame)
 }
 

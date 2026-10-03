@@ -128,6 +128,11 @@ export function burst(type, x, y, n = 8) {
   }
 }
 
+/** 지금 떠 있는 효과 수. 렌더러가 「그릴 게 없나」를 볼 때 쓴다. */
+export function count() {
+  return particles.length
+}
+
 export function update(dt) {
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i]
