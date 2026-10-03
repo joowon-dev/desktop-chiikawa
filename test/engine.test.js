@@ -114,6 +114,36 @@ describe('윈도우: 최대화한 창 + 작업 표시줄', () => {
     expect(standing.length).toBeGreaterThanOrEqual(1)
     for (const ch of standing) expect(ch.win).toBe(taskbar.id)
   })
+
+  it('최대화했다가 창 모드로 되돌리면 그 창 위로 다시 올라간다', () => {
+    const world = createWorld({ seed: 31, w: 1440, h: 900 })
+    const taskbar = { id: 1, x: 0, y: 852, w: 1440, h: 48, dock: true }
+    const win = { id: 2, x: 200, y: 200, w: 700, h: 500 }
+    setWindows(world, [win, taskbar])
+    run(world, 6)
+    setWindows(world, [{ ...win, x: 0, y: 0, w: 1440, h: 852 }, taskbar]) // 최대화
+    run(world, 8)
+    setWindows(world, [win, taskbar]) // 다시 창 모드 — 같은 창(id)이다
+    run(world, 8)
+    const onWin = world.chars.filter((c) => c.mode === 'ground' && c.win === win.id)
+    expect(onWin.length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('한 마리뿐이어도 작업 표시줄에서 되돌아온 창으로 옮겨 간다', () => {
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const world = createWorld({ seed, w: 1440, h: 900, maxChars: 1 })
+      const taskbar = { id: 1, x: 0, y: 852, w: 1440, h: 48, dock: true }
+      const win = { id: 2, x: 200, y: 200, w: 700, h: 500 }
+      setWindows(world, [taskbar, win]) // 셸은 작업 표시줄을 늘 맨 앞에 넣는다
+      run(world, 6)
+      setWindows(world, [taskbar, { ...win, x: 0, y: 0, w: 1440, h: 900 }]) // 전체 화면
+      run(world, 8)
+      expect(world.chars.filter((c) => c.mode === 'ground' && c.win === taskbar.id)).toHaveLength(1)
+      setWindows(world, [taskbar, win])
+      run(world, 4)
+      expect(world.chars.filter((c) => c.mode === 'ground' && c.win === win.id)).toHaveLength(1)
+    }
+  })
 })
 
 describe('창 위에서', () => {

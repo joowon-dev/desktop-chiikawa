@@ -77,8 +77,12 @@ export function setWindows(world, list) {
   // 새 창. 처음 켰을 때는 이미 떠 있던 창들이 한꺼번에 「새 창」이라 차례로 나오게 한다.
   let k = 0
   for (const win of world.windows) {
+    // 설 수 없게 된 창(최대화·전체 화면)은 잊는다 — 창 모드로 돌아오면 다시 「새 창」이라 누가 올라간다.
+    if (!standable(win, world.screen)) {
+      world.known.delete(win.id)
+      continue
+    }
     if (world.known.has(win.id)) continue
-    if (!standable(win, world.screen)) continue
     world.known.add(win.id)
     const delay = world.started ? POP_DELAY + k * BURST_GAP : 0.6 + k * BURST_GAP
     world.pops.push({ at: world.t + delay, winId: win.id })
@@ -187,7 +191,8 @@ function runPops(world) {
       launchPop(world, ch, win)
     } else {
       // 꽉 찼으면 제일 붐비는 창에서 한 마리를 데려온다(그 창에 둘 이상일 때만).
-      const mover = crowdedChar(world)
+      // 그런 창이 없으면 작업 표시줄에서 기다리던 아이를 — 창이 생기면 창이 먼저다.
+      const mover = crowdedChar(world) || (win.dock ? null : dockChar(world))
       if (!mover) continue
       world.events.push({ type: 'puff', x: mover.x, y: mover.y - CHAR_H / 2 })
       launchPop(world, mover, win)
@@ -274,6 +279,10 @@ function crowdedChar(world) {
   let best = null
   for (const list of groups.values()) if (list.length > 1 && (!best || list.length > best.length)) best = list
   return best ? best[best.length - 1] : null
+}
+
+function dockChar(world) {
+  return world.chars.find((ch) => ch.mode === 'ground' && world.byId.get(ch.win)?.dock) || null
 }
 
 /** 화면 아래에서 솟아올라 win 윗변에 내려앉게 쏜다. */
