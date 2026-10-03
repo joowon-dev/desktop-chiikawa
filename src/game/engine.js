@@ -14,7 +14,7 @@ import {
 } from './constants.js'
 import { KINDS, MOVES, castOf } from './cast.js'
 import { between, pick, rand, weighted } from './rng.js'
-import { nearestVisible, segmentAt, standable, visibleLength, visibleSegments } from './surfaces.js'
+import { nearestVisible, segmentAt, standable, visibleSegments } from './surfaces.js'
 
 export function createWorld({ seed = 1, w = 1440, h = 900, maxChars = DEFAULT_MAX_CHARS, kinds = KINDS } = {}) {
   return {

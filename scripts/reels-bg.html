@@ -1,0 +1,167 @@
+<!doctype html>
+<!--
+  릴스 찍을 때 쓰는 배경. scripts/make-reels-bg.sh 가 크롬으로 연다.
+    ?w=3456&h=2234            맥 바탕화면 (화면 녹화할 때 깔아 두는 것)
+    ?w=1080&h=1920&title=1    릴스 세로 배경, 위에 제목
+    ?w=1080&h=1920            릴스 세로 배경, 글자 없음
+  그림은 전부 여기서 그린다(하늘·구름·풀밭 언덕·꽃). 캐릭터는 넣지 않는다 — 캐릭터는 앱이 올린다.
+-->
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&display=swap">
+<style>html,body{margin:0;background:transparent}canvas{display:block}</style>
+</head><body><canvas id="c"></canvas>
+<script>
+const q = new URLSearchParams(location.search)
+const W = +q.get('w') || 1080
+const H = +q.get('h') || 1920
+const TITLE = q.get('title') === '1'
+const c = document.getElementById('c')
+c.width = W; c.height = H
+const g = c.getContext('2d')
+const u = Math.min(W, H) / 1000 // 크기 단위
+
+// 같은 그림이 나오게 시드 고정 난수.
+let seed = 7
+const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647)
+
+// 하늘: 위는 맑은 하늘색, 아래로 갈수록 분홍빛.
+const sky = g.createLinearGradient(0, 0, 0, H)
+sky.addColorStop(0, '#a9d4ff')
+sky.addColorStop(0.55, '#d6ebff')
+sky.addColorStop(1, '#ffe1ea')
+g.fillStyle = sky
+g.fillRect(0, 0, W, H)
+
+// 해의 번짐.
+const sun = g.createRadialGradient(W * 0.82, H * 0.14, 0, W * 0.82, H * 0.14, 420 * u)
+sun.addColorStop(0, 'rgba(255,255,255,0.85)')
+sun.addColorStop(1, 'rgba(255,255,255,0)')
+g.fillStyle = sun
+g.fillRect(0, 0, W, H)
+
+// 몽글몽글 구름: 동그라미를 겹친다. 아래는 납작하게 자른다.
+function cloud(x, y, s) {
+  g.save()
+  g.beginPath()
+  g.rect(x - 200 * s, y - 200 * s, 420 * s, 200 * s + 2)
+  g.clip()
+  g.fillStyle = 'rgba(255,255,255,0.95)'
+  for (const [dx, dy, r] of [[-90, 0, 55], [-30, -35, 75], [50, -20, 65], [110, 0, 45], [0, 0, 60]]) {
+    g.beginPath()
+    g.arc(x + dx * s, y + dy * s, r * s, 0, Math.PI * 2)
+    g.fill()
+  }
+  g.restore()
+}
+const clouds = W > H
+  ? [[0.14, 0.18, 1.3], [0.42, 0.1, 0.9], [0.66, 0.26, 1.1], [0.9, 0.36, 0.8], [0.28, 0.4, 0.7]]
+  : TITLE
+    // 제목 자리(위 20%)는 비워 둔다.
+    ? [[0.1, 0.26, 0.8], [0.82, 0.3, 0.9], [0.5, 0.42, 0.75], [0.16, 0.55, 0.65]]
+    : [[0.2, 0.08, 1.1], [0.78, 0.15, 0.9], [0.4, 0.3, 0.8], [0.88, 0.42, 0.7], [0.12, 0.5, 0.65]]
+for (const [x, y, s] of clouds) cloud(W * x, H * y, s * u * 1.4)
+
+// 반짝이 몇 개.
+function star(x, y, r, color) {
+  g.beginPath()
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2 - Math.PI / 2
+    const rr = i % 2 ? r * 0.38 : r
+    g.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr)
+  }
+  g.closePath()
+  g.fillStyle = color
+  g.fill()
+}
+for (let i = 0; i < 14; i++) {
+  star(rnd() * W, (TITLE ? H * 0.22 : 0) + rnd() * H * (TITLE ? 0.33 : 0.55), (6 + rnd() * 8) * u, i % 3 ? 'rgba(255,255,255,0.9)' : 'rgba(255,214,107,0.9)')
+}
+
+// 풀밭 언덕 셋. 뒤가 옅고 앞이 진하다.
+function hill(base, amp, freq, phase, color) {
+  g.beginPath()
+  g.moveTo(0, H)
+  for (let x = 0; x <= W; x += 4) {
+    const y = base - Math.sin((x / W) * Math.PI * freq + phase) * amp
+    g.lineTo(x, y)
+  }
+  g.lineTo(W, H)
+  g.closePath()
+  g.fillStyle = color
+  g.fill()
+}
+const ground = W > H ? 0.8 : 0.84
+hill(H * (ground - 0.06), 40 * u, 1.6, 0.4, '#cdeeb4')
+hill(H * (ground - 0.02), 55 * u, 1.1, 2.1, '#b4e294')
+hill(H * (ground + 0.04), 35 * u, 1.9, 4.0, '#9bd67a')
+
+// 풀잎과 꽃 — 앞 언덕에만.
+function hillY(x) {
+  return H * (ground + 0.04) - Math.sin((x / W) * Math.PI * 1.9 + 4.0) * 35 * u
+}
+for (let i = 0; i < (W > H ? 140 : 90); i++) {
+  const x = rnd() * W
+  const y = hillY(x) + 10 * u + rnd() * (H - hillY(x)) * 0.85
+  if (rnd() < 0.62) {
+    // 풀 한 포기
+    g.strokeStyle = rnd() < 0.5 ? '#7cc45c' : '#86cf66'
+    g.lineWidth = 3 * u
+    g.lineCap = 'round'
+    for (const k of [-1, 0, 1]) {
+      g.beginPath()
+      g.moveTo(x, y)
+      g.quadraticCurveTo(x + k * 4 * u, y - 10 * u, x + k * 8 * u, y - 16 * u)
+      g.stroke()
+    }
+  } else {
+    // 꽃 한 송이
+    const petal = rnd() < 0.5 ? '#ffffff' : '#ffc4d4'
+    const r = (6 + rnd() * 4) * u
+    g.fillStyle = petal
+    for (let k = 0; k < 5; k++) {
+      const a = (k / 5) * Math.PI * 2
+      g.beginPath()
+      g.arc(x + Math.cos(a) * r * 0.8, y + Math.sin(a) * r * 0.8, r * 0.6, 0, Math.PI * 2)
+      g.fill()
+    }
+    g.fillStyle = '#ffd86b'
+    g.beginPath()
+    g.arc(x, y, r * 0.45, 0, Math.PI * 2)
+    g.fill()
+  }
+}
+
+function done() { document.title = 'ready' }
+
+if (TITLE) {
+  document.fonts.load(`80px Jua`).then(() => {
+    g.textAlign = 'center'
+    g.lineJoin = 'round'
+    // 흰 테두리를 둘러 하늘 위에서도 또렷하게.
+    const say = (text, y, size, color) => {
+      g.font = `${size * u}px Jua`
+      g.lineWidth = size * u * 0.16
+      g.strokeStyle = '#ffffff'
+      g.strokeText(text, W / 2, y)
+      g.fillStyle = color
+      g.fillText(text, W / 2, y)
+    }
+    say('창을 열면', H * 0.1, 78, '#4b3a35')
+    say('친구들이 뿅!', H * 0.1 + 118 * u, 108, '#ff6f96')
+    // 아래 한 줄은 하얀 알약 위에.
+    g.font = `${36 * u}px Jua`
+    const line = '바탕화면 치이카와 · 맥 · 윈도우 무료'
+    const tw = g.measureText(line).width + 56 * u
+    const ty = H * 0.955
+    g.fillStyle = 'rgba(255,255,255,0.9)'
+    g.beginPath()
+    g.roundRect(W / 2 - tw / 2, ty - 46 * u, tw, 66 * u, 33 * u)
+    g.fill()
+    g.fillStyle = '#4b3a35'
+    g.fillText(line, W / 2, ty)
+    done()
+  })
+} else {
+  done()
+}
+</script></body></html>

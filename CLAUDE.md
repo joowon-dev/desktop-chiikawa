@@ -6,7 +6,8 @@
 화면 밖으로 사라진다). 마우스를 가까이 대면 쳐다보고 반가워한다.
 
 게임이 아니다 — 상어·불꽃놀이와 같은 갈래로, **바탕화면에서 같이 사는** 앱이다.
-주인이 「알아서 만들어 줘」 하고 잔 사이에 만든 첫 판(v0.1.0)이다.
+주인이 「알아서 만들어 줘」 하고 잔 사이에 만든 첫 판에서 시작해 **v1.0.0 으로 배포했다**
+(GitHub `joowon-dev/desktop-chiikawa`, 받는 곳 https://joowonkoh.com/playground/desktop-chiikawa).
 
 ```bash
 npm start            # 빌드 → 돌던 앱 종료 → 새로 실행 (맥)
@@ -57,6 +58,28 @@ CHIIKAWA_DEBUG=1 dist/mac/Chiikawa.app/Contents/MacOS/DesktopChiikawa   # 3 초�
 - **실제 윈도우에서 아직 돌려 본 적이 없다.** 첫 실행에서 볼 것: 투명한지(검은 화면이면 DWM
   알파가 안 먹은 것), 아래 창이 클릭되는지, 작업 표시줄 위에 서는지, 배율이 다른 두 모니터에서
   창 윗변에 정확히 서는지.
+
+## 새 버전 내기 — 야구·상어와 같은 순서
+
+1. 버전 올리기: `mac/Info.plist`(CFBundleShortVersionString), `windows/DesktopChiikawa.csproj`(Version),
+   `package.json`. 셋이 같아야 한다 — 앱은 자기 버전과 릴리스 태그를 비교해 「새 버전」을 띄운다.
+2. 커밋 → `git tag vX.Y.Z && git push origin main vX.Y.Z`. CI(`.github/workflows/release.yml`)가
+   맥 zip·dmg(임시 서명)와 윈도우 zip·설치본을 릴리스에 붙인다.
+3. **맥은 이 맥에서 공증한 것으로 덮어쓴다** — `./mac/notarize.sh` 후
+   `gh release upload vX.Y.Z dist/DesktopChiikawa-mac.zip dist/DesktopChiikawa-mac.dmg --clobber`.
+   CI 의 임시 서명 zip 은 자동 업데이트의 `spctl` 검사에서 떨어진다(사람에게 페이지를 연다).
+4. 사이트(`~/joowonkoh-dev/src/app/playground/desktop-chiikawa/releases.ts`)에 항목을 더하고,
+   `public/downloads/` 의 고정 이름 파일을 갈아 끼운다(지난 버전은 `downloads/desktop-chiikawa/v<버전>/` 로).
+   게임 코드를 바꿨으면 사이트의 `kit/` 에도 다시 복사한다(데모가 앱과 같아야 한다).
+
+자동 업데이트는 하루 한 번 GitHub `releases/latest` 를 묻고, 메뉴에 「새 버전 설치」를 띄운다.
+맥은 `-mac.zip` 을 받아 공증·번들 ID 를 확인하고 번들을 갈아 끼운다. 윈도우는 `-win-Setup.exe` 를
+`/SILENT` 로 돌린다. 실패하면 아무것도 안 건드리고 받는 페이지를 연다.
+
+## 릴스 배경
+
+`./scripts/make-reels-bg.sh` → `reels/`. 하늘·구름·풀밭 언덕·꽃을 그린 것이고 캐릭터는 없다
+(캐릭터는 앱이 올린다). 맥 바탕화면(3456×2234, 2560×1440)과 릴스 세로(1080×1920, 제목 있음/없음).
 
 ## 캐릭터 그림 폴더
 
@@ -139,7 +162,7 @@ CHIIKAWA_DEBUG=1 dist/mac/Chiikawa.app/Contents/MacOS/DesktopChiikawa   # 3 초�
 
 ## 열려 있는 것
 
-- 윈도우 셸은 컴파일만 확인했다(위). 설치본(Inno Setup)·자동 업데이트·CI 는 아직 없다.
+- 윈도우 셸은 컴파일과 CI 설치본 빌드까지만 확인했다. 실제 윈도우 PC 에서 돌려 본 적이 없다.
 - 전체 화면 앱(윗변이 0)에는 못 선다 — 일부러다(아이가 화면 밖에 선다).
 - 그림 크기는 그림만 키운다(`setScale`). 월드 판정은 기본 크기 그대로라 「아주 크게」에서는
   앞 창 가장자리에 조금 더 일찍 잘려 보인다.

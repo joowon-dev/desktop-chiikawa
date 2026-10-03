@@ -5,7 +5,6 @@
 
 import { getScale } from './draw.js'
 
-const LINE = '#4b3a35'
 const NOTE_COLORS = ['#ff7aa8', '#6fa8ff', '#ffb84d', '#8fd16a', '#b98cff']
 const SPARKLE_COLORS = ['#ffd86b', '#ff9fb8', '#9fd8ff', '#ffffff']
 
