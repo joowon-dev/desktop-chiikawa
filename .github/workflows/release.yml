@@ -1,0 +1,93 @@
+# 태그를 밀면 맥·윈도우 빌드를 만들어 릴리스에 붙인다.
+#   git tag v1.0.0 && git push origin v1.0.0
+#
+# 윈도우 설치본(Inno Setup)은 윈도우에서만 만들어진다. 셸 자체는 맥에서도 컴파일되지만
+# (windows/build.sh), 설치본을 만들려면 ISCC 가 있어야 해서 CI 가 맡는다.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  # PR 에서도 돌린다. 산출물이 깨졌는지는 태그를 밀기 전에 알아야 한다 —
+  # 태그를 밀 때까지 기다리면 이미 릴리스가 깨진 뒤다. 릴리스 잡은 태그일 때만 돈다.
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci
+      - run: npm test
+
+  mac:
+    needs: test
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: ./mac/build.sh --zip
+      - run: ./mac/dmg.sh
+      # 여기서 나오는 맥 산출물은 **임시(ad-hoc) 서명**이라 Gatekeeper 를 못 지난다.
+      # 빌드가 깨졌는지 보는 용도이고, **배포에는 ./mac/notarize.sh 로 만든 것을 쓴다.**
+      # 자동 업데이트도 서명을 검사하므로 임시 서명 zip 은 설치되지 않는다(페이지만 열린다).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac
+          path: |
+            dist/DesktopChiikawa-mac.zip
+            dist/DesktopChiikawa-mac.dmg
+
+  windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: "9.0.x" }
+      - name: 빌드
+        run: dotnet publish windows/DesktopChiikawa.csproj -c Release -o dist/win
+      - name: 압축
+        shell: pwsh
+        run: |
+          # 디버그 심볼은 빼고 담는다.
+          Remove-Item dist/win/*.pdb -ErrorAction SilentlyContinue
+          Compress-Archive -Path dist/win/* -DestinationPath dist/DesktopChiikawa-win-x64.zip
+      - name: 설치본
+        shell: pwsh
+        run: |
+          # **자동 업데이트가 받아 가는 것이 이 설치본이다.** zip 은 직접 푸는 사람 몫이다.
+          choco install innosetup -y --no-progress
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          if (-not $version) { $version = "0.0.0" }
+          # 중괄호가 없으면 PowerShell 이 $env:ProgramFiles 까지만 변수로 읽고 (x86) 을
+          # 글자로 붙여 「C:\Program Files(x86)」 이라는 없는 경로를 만든다.
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=$version windows/installer.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/DesktopChiikawa-win-x64.zip
+            dist/DesktopChiikawa-win-Setup.exe
+
+  publish:
+    needs: [mac, windows]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/**/*.zip
+            artifacts/**/*.dmg
+            artifacts/**/*.exe
+          generate_release_notes: true

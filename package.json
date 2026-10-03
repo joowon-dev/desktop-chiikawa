@@ -1,6 +1,6 @@
 {
   "name": "desktop-chiikawa",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "창마다 위에 치이카와 친구들이 올라와 돌아다니는 투명 오버레이 (맥·윈도우)",
@@ -9,7 +9,9 @@
     "build:mac": "./mac/build.sh --zip",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build:win": "./windows/build.sh --zip"
+    "build:win": "./windows/build.sh --zip",
+    "dmg": "./mac/dmg.sh",
+    "release:mac": "./mac/notarize.sh"
   },
   "devDependencies": {
     "vitest": "^2.1.8"

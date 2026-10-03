@@ -15,6 +15,8 @@
 //
 // **실제 윈도우에서 아직 돌려 본 적이 없다.** 컴파일은 맥에서 된다(windows/build.sh).
 
+using System.Diagnostics;
+using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -249,9 +251,11 @@ sealed class ChiikawaContext : ApplicationContext
     private readonly System.Windows.Forms.Timer poll = new() { Interval = 33 };
     private Task<CoreWebView2Environment>? environment;
     private bool visible = true;
+    private readonly SynchronizationContext ui;
 
     public ChiikawaContext()
     {
+        ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
         hotkeys = new HotkeyWindow(id => { if (id == HotkeyToggle) ToggleVisible(); });
         var ok = Native.RegisterHotKey(hotkeys.Handle, HotkeyToggle,
             Native.MOD_ALT | Native.MOD_SHIFT | Native.MOD_NOREPEAT, Native.VK_K);
@@ -270,6 +274,137 @@ sealed class ChiikawaContext : ApplicationContext
 
         poll.Tick += (_, _) => Poll();
         poll.Start();
+
+        // 켠 지 20초 뒤에 한 번, 그 뒤로는 하루 한 번.
+        var firstCheck = new System.Windows.Forms.Timer { Interval = 20_000 };
+        firstCheck.Tick += (_, _) => { firstCheck.Stop(); _ = CheckForUpdateAsync(); };
+        firstCheck.Start();
+        updateTimer.Tick += (_, _) => _ = CheckForUpdateAsync();
+        updateTimer.Start();
+    }
+
+    // MARK: 업데이트 — 상어와 같은 두 단계. 1단계는 알리기만, 2단계는 눌러야 설치본을 받아 조용히 다시 깐다.
+
+    private const string ReleaseApi = "https://api.github.com/repos/joowon-dev/desktop-chiikawa/releases/latest";
+    private const string ReleasePage = "https://joowonkoh.com/playground/desktop-chiikawa";
+    /// <summary>자동 업데이트가 받아 가는 것은 설치본이다 — zip 은 사람이 직접 풀 때 쓴다.</summary>
+    private const string WinAssetSuffix = "-win-Setup.exe";
+
+    private static readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(20) };
+    private readonly System.Windows.Forms.Timer updateTimer = new() { Interval = 24 * 60 * 60 * 1000 };
+    private string? updateVersion;
+    private string? updateNote;
+    private string? updateAsset;
+    private bool updating;
+
+    private static string CurrentVersion =>
+        System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.0.0";
+
+    /// <summary>"v1.10.0" 이 "1.9.0" 보다 높다. 문자열로 비교하면 거꾸로 나온다.</summary>
+    public static bool IsNewerVersion(string candidate, string current)
+    {
+        static int[] Parts(string text) => text.TrimStart('v', 'V', ' ')
+            .Split('.')
+            .Select(p => int.TryParse(new string(p.TakeWhile(char.IsDigit).ToArray()), out var n) ? n : 0)
+            .ToArray();
+        var a = Parts(candidate);
+        var b = Parts(current);
+        for (var i = 0; i < Math.Max(a.Length, b.Length); i += 1)
+        {
+            var x = i < a.Length ? a[i] : 0;
+            var y = i < b.Length ? b[i] : 0;
+            if (x != y) return x > y;
+        }
+        return false;
+    }
+
+    private async Task CheckForUpdateAsync()
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, ReleaseApi);
+            request.Headers.Add("Accept", "application/vnd.github+json");
+            // GitHub 은 User-Agent 없는 요청을 거절한다.
+            request.Headers.Add("User-Agent", "DesktopChiikawa");
+            using var response = await http.SendAsync(request);
+            if (!response.IsSuccessStatusCode) return;
+
+            var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+            var tag = json.GetProperty("tag_name").GetString();
+            if (tag is null || !IsNewerVersion(tag, CurrentVersion)) return;
+
+            string? asset = null;
+            if (json.TryGetProperty("assets", out var assets))
+            {
+                foreach (var a in assets.EnumerateArray())
+                {
+                    var name = a.TryGetProperty("name", out var n) ? n.GetString() : null;
+                    if (name is not null && name.EndsWith(WinAssetSuffix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        asset = a.GetProperty("browser_download_url").GetString();
+                        break;
+                    }
+                }
+            }
+            ui.Post(_ =>
+            {
+                updateVersion = tag;
+                updateAsset = asset;
+                RefreshMenu();
+            }, null);
+        }
+        catch
+        {
+            // 새 버전을 못 찾는 것과 아이들이 안 도는 것은 다른 일이다.
+        }
+    }
+
+    private async void InstallUpdate()
+    {
+        if (updating) return;
+        if (updateAsset is null)
+        {
+            OpenReleasePage();
+            return;
+        }
+        updating = true;
+        updateNote = "내려받는 중…";
+        RefreshMenu();
+
+        var path = Path.Combine(Path.GetTempPath(), $"DesktopChiikawa-{Guid.NewGuid():N}.exe");
+        try
+        {
+            using (var request = new HttpRequestMessage(HttpMethod.Get, updateAsset))
+            {
+                request.Headers.Add("User-Agent", "DesktopChiikawa");
+                using var response = await http.SendAsync(request);
+                response.EnsureSuccessStatusCode();
+                await using var file = File.Create(path);
+                await response.Content.CopyToAsync(file);
+            }
+            updateNote = "설치하는 중…";
+            RefreshMenu();
+            // 조용히 깔고, 돌던 앱을 닫았다가 새것으로 다시 띄운다(installer.iss 가 그렇게 돼 있다).
+            Process.Start(new ProcessStartInfo(path)
+            {
+                Arguments = "/SILENT /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /NORESTART",
+                UseShellExecute = true,
+            });
+            Quit();
+        }
+        catch
+        {
+            updating = false;
+            updateNote = "직접 받기";
+            RefreshMenu();
+            OpenReleasePage();
+        }
+    }
+
+    private static void OpenReleasePage()
+    {
+        try { Process.Start(new ProcessStartInfo(ReleasePage) { UseShellExecute = true }); }
+        catch { }
     }
 
     private void OnDisplayChanged(object? sender, EventArgs e)
@@ -385,6 +520,13 @@ sealed class ChiikawaContext : ApplicationContext
     private void RefreshMenu()
     {
         var menu = new ContextMenuStrip();
+        // 1단계 — 새 버전이 있을 때만 낸다. 없으면 메뉴에 아무 흔적도 없다.
+        if (updateVersion is not null)
+        {
+            menu.Items.Add(new ToolStripMenuItem(updateNote ?? $"새 버전 {updateVersion} 설치", null,
+                (_, _) => InstallUpdate()) { Enabled = !updating });
+            menu.Items.Add(new ToolStripSeparator());
+        }
         menu.Items.Add(new ToolStripMenuItem("숨기기 / 보이기  Alt+Shift+K", null, (_, _) => ToggleVisible()));
         menu.Items.Add(new ToolStripSeparator());
 
@@ -417,6 +559,7 @@ sealed class ChiikawaContext : ApplicationContext
             null, (_, _) => OpenSpritesFolder()));
         menu.Items.Add(new ToolStripMenuItem("그림 다시 불러오기", null, (_, _) => ReloadSprites()));
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(new ToolStripMenuItem($"바탕화면 치이카와 {CurrentVersion}") { Enabled = false });
         menu.Items.Add(new ToolStripMenuItem("종료", null, (_, _) => Quit()));
 
         var old = tray.ContextMenuStrip;
@@ -478,7 +621,7 @@ sealed class ChiikawaContext : ApplicationContext
             Directory.CreateDirectory(SpritesFolder);
             var guide = Path.Combine(SpritesFolder, "읽어 주세요.txt");
             if (!File.Exists(guide)) File.WriteAllText(guide, SpritesGuide, Encoding.UTF8);
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(SpritesFolder) { UseShellExecute = true });
+            Process.Start(new ProcessStartInfo(SpritesFolder) { UseShellExecute = true });
         }
         catch (Exception e)
         {
@@ -506,6 +649,7 @@ sealed class ChiikawaContext : ApplicationContext
     private void Quit()
     {
         poll.Stop();
+        updateTimer.Stop();
         Native.UnregisterHotKey(hotkeys.Handle, HotkeyToggle);
         SystemEvents.DisplaySettingsChanged -= OnDisplayChanged;
         tray.Visible = false;
