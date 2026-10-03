@@ -53,8 +53,11 @@ CHIIKAWA_DEBUG=1 dist/mac/Chiikawa.app/Contents/MacOS/DesktopChiikawa   # 3 초�
 - 좌표는 물리 픽셀(PerMonitorV2)이고, 오버레이마다 `DeviceDpi/96` 으로 나눠 CSS 픽셀로 보낸다.
 - 파일은 `WebResourceRequested` 로 `https://chiikawa.local/` 에서 내준다. `/sprites/…` 는
   `%APPDATA%\DesktopChiikawa\sprites` 에서 — 같은 출처라 그림 여백 자르기가 막히지 않는다.
-- 투명은 상어와 같은 DWM 픽셀 알파, 클릭 통과는 창과 **모든 자식 창**에 `WS_EX_TRANSPARENT`.
-  안 통과하면 `CHIIKAWA_LAYERED=1`. 로그는 `CHIIKAWA_DEBUG=1` 이면 `%APPDATA%\DesktopChiikawa\debug.log`.
+- 투명은 DWM 픽셀 알파 + **검정 컬러 키**(`LWA_COLORKEY`), 클릭 통과는 `WS_EX_LAYERED | WS_EX_TRANSPARENT`.
+  **`WS_EX_TRANSPARENT` 만으로는 클릭이 안 통과한다** — v1.0.2 까지 레이어드를 빼 두었다가 실제 윈도우에서
+  화면 전체 클릭·키보드가 먹통이 됐다(웹뷰가 포커스까지 가져간다). 컬러 키는 DWM 이 레이어드 창의
+  픽셀 알파를 무시하는 기계에서도 빈 곳을 뚫어 검은 화면을 막는 안전장치라, 렌더러는 순수 검정(#000)을
+  쓰면 안 된다(그 픽셀은 구멍이 난다). 로그는 `CHIIKAWA_DEBUG=1` 이면 `%APPDATA%\DesktopChiikawa\debug.log`.
 - **실제 윈도우에서 아직 돌려 본 적이 없다.** 첫 실행에서 볼 것: 투명한지(검은 화면이면 DWM
   알파가 안 먹은 것), 아래 창이 클릭되는지, 작업 표시줄 위에 서는지, 배율이 다른 두 모니터에서
   창 윗변에 정확히 서는지.

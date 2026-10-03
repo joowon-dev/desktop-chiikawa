@@ -45,6 +45,7 @@ static class Native
     public const int WS_EX_TOOLWINDOW = 0x00000080;
     public const int WS_EX_NOACTIVATE = 0x08000000;
     public const int WS_EX_LAYERED = 0x00080000;
+    public const uint LWA_COLORKEY = 0x00000001;
     public const uint LWA_ALPHA = 0x00000002;
     public const int WM_HOTKEY = 0x0312;
     public const int MOD_ALT = 0x0001;
@@ -888,21 +889,21 @@ sealed class Overlay : Form
         get
         {
             var p = base.CreateParams;
-            p.ExStyle |= Native.WS_EX_TRANSPARENT | Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE;
-            if (Layered) p.ExStyle |= Native.WS_EX_LAYERED;
+            // WS_EX_TRANSPARENT 는 WS_EX_LAYERED 와 같이 있어야만 클릭을 통과시킨다. 하나만 걸면
+            // 화면 전체를 덮은 이 창이 클릭을 다 받고, 웹뷰가 포커스까지 가져가 키보드도 죽는다.
+            p.ExStyle |= Native.WS_EX_LAYERED | Native.WS_EX_TRANSPARENT | Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE;
             return p;
         }
     }
-
-    /// <summary>CHIIKAWA_LAYERED=1 이면 레이어드 창으로. 클릭이 안 통과하는 기계를 위한 마지막 수단.</summary>
-    private static bool Layered => System.Environment.GetEnvironmentVariable("CHIIKAWA_LAYERED") == "1";
 
     protected override bool ShowWithoutActivation => true;
 
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        if (Layered) Native.SetLayeredWindowAttributes(Handle, 0, 255, Native.LWA_ALPHA);
+        // 검정 컬러 키를 같이 건다 — DWM 이 레이어드 창의 픽셀 알파를 무시하는 기계에서도 빈 곳(검정)은
+        // 뚫려서 화면이 까맣게 덮이지 않는다. 렌더러는 순수 검정을 쓰지 않는다.
+        Native.SetLayeredWindowAttributes(Handle, 0, 255, Native.LWA_COLORKEY | Native.LWA_ALPHA);
         // 빈 영역으로 블러를 켠다 — 흐림은 없고 픽셀 단위 알파만 얻는다.
         var region = Native.CreateRectRgn(0, 0, -1, -1);
         try
