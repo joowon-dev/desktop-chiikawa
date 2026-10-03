@@ -297,7 +297,11 @@ sealed class ChiikawaContext : ApplicationContext
 
     private void EnterFriendCode()
     {
-        var code = Prompt("친구 코드 입력", "받은 친구 코드를 넣으면 그 그림으로 친구들이 나와요.", "CHII-XXXX-XXXX");
+        // 친구가 코드를 복사해 둔 채로 열면 미리 채워 둔다. 붙여넣기(Ctrl+V)도 된다.
+        var copied = "";
+        try { if (Clipboard.ContainsText()) copied = Clipboard.GetText().Trim(); } catch { }
+        if (!System.Text.RegularExpressions.Regex.IsMatch(copied, "^[A-Za-z0-9-]{4,20}$")) copied = "";
+        var code = Prompt("친구 코드 입력", "받은 친구 코드를 넣으면 그 그림으로 친구들이 나와요.", "예: CHII77", copied);
         if (string.IsNullOrWhiteSpace(code)) return;
         _ = SyncFriendSpritesAsync(code.Trim(), interactive: true);
     }
@@ -399,7 +403,7 @@ sealed class ChiikawaContext : ApplicationContext
         MessageBox.Show(body, title, MessageBoxButtons.OK, MessageBoxIcon.Information);
 
     /// <summary>한 줄 입력 창. 취소하면 null.</summary>
-    private static string? Prompt(string title, string body, string placeholder)
+    private static string? Prompt(string title, string body, string placeholder, string initial = "")
     {
         using var form = new Form
         {
@@ -407,7 +411,7 @@ sealed class ChiikawaContext : ApplicationContext
             StartPosition = FormStartPosition.CenterScreen, MaximizeBox = false, MinimizeBox = false, TopMost = true,
         };
         var label = new Label { Left = 16, Top = 14, Width = 340, Text = body };
-        var box = new TextBox { Left = 16, Top = 44, Width = 330, PlaceholderText = placeholder };
+        var box = new TextBox { Left = 16, Top = 44, Width = 330, PlaceholderText = placeholder, Text = initial };
         var ok = new Button { Text = "받기", Left = 186, Width = 76, Top = 82, DialogResult = DialogResult.OK };
         var cancel = new Button { Text = "취소", Left = 270, Width = 76, Top = 82, DialogResult = DialogResult.Cancel };
         form.Controls.AddRange(new Control[] { label, box, ok, cancel });

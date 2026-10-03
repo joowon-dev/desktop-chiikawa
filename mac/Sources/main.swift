@@ -315,6 +315,7 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installEditMenu()
         rebuildOverlays()
         buildStatusItem()
         registerHotKeys()
@@ -359,7 +360,12 @@ final class App: NSObject, NSApplicationDelegate {
         alert.messageText = "친구 코드 입력"
         alert.informativeText = "받은 친구 코드를 넣으면 그 그림으로 친구들이 나와요."
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        field.placeholderString = "CHII-XXXX-XXXX"
+        field.placeholderString = "예: CHII77"
+        // 친구가 코드를 복사해 둔 채로 열면 미리 채워 둔다.
+        if let copied = NSPasteboard.general.string(forType: .string)?
+            .trimmingCharacters(in: .whitespacesAndNewlines), Self.looksLikeCode(copied) {
+            field.stringValue = copied
+        }
         alert.accessoryView = field
         alert.addButton(withTitle: "받기")
         alert.addButton(withTitle: "취소")
@@ -368,6 +374,27 @@ final class App: NSObject, NSApplicationDelegate {
         let code = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !code.isEmpty else { return }
         syncFriendSprites(code: code, interactive: true)
+    }
+
+    /// 복사해 둔 글이 친구 코드처럼 생겼나 — 영문·숫자·하이픈 4~20자.
+    static func looksLikeCode(_ text: String) -> Bool {
+        text.range(of: "^[A-Za-z0-9-]{4,20}$", options: .regularExpression) != nil
+    }
+
+    /// 메뉴바에만 사는 앱은 편집 메뉴가 없어서 입력 칸에서 ⌘V·⌘C·⌘A 가 안 먹는다.
+    /// 화면에는 안 보이는 메인 메뉴에 편집 메뉴를 달아 단축키만 살린다.
+    private func installEditMenu() {
+        let main = NSMenu()
+        let editItem = NSMenuItem()
+        let edit = NSMenu(title: "편집")
+        edit.addItem(withTitle: "잘라내기", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "복사하기", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "붙여넣기", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "전체 선택", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.addItem(withTitle: "실행 취소", action: Selector(("undo:")), keyEquivalent: "z")
+        editItem.submenu = edit
+        main.addItem(editItem)
+        NSApp.mainMenu = main
     }
 
     @objc private func refreshFriendSprites() {

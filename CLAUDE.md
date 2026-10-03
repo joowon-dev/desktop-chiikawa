@@ -116,6 +116,9 @@ CHIIKAWA_DEBUG=1 dist/mac/Chiikawa.app/Contents/MacOS/DesktopChiikawa   # 3 초�
   **켤 때마다 다시 받는다**(주인이 그림을 바꾸면 친구들에게도 간다). 「친구 코드 지우기」는 받은 파일만 지운다.
 - 받아 오는 순간 인터넷이 없으면 「인터넷 연결이 필요해요」(다시 시도/닫기)를 띄운다 — 주인이 정한 동작.
   한 번 받은 그림은 폴더에 남아서 끊겨 있어도 그 그림으로 산다.
+- 지금 켜진 코드: `CHII-HCJE-QTXT`(첫 코드), `CHII77`(주인이 「쉽게」 해 달라고 해서 만든 짧은 코드). 대소문자는 안 가린다.
+- 입력 창: 맥은 메뉴바 전용 앱이라 편집 메뉴가 없어 ⌘V 가 안 먹었다 — 안 보이는 메인 메뉴에 편집 메뉴를
+  달아 살린다(`installEditMenu`). 두 셸 다 클립보드에 코드처럼 생긴 글(영문·숫자·하이픈 4~20자)이 있으면 미리 채운다.
 - 코드 더하기: `insert into chiikawa_codes (code, note) values ('CHII-XXXX-XXXX', '누구');`
   끊기: `update chiikawa_codes set enabled = false where code = '…';` 코드는 대문자로 저장한다(앱이 대문자로 보낸다).
 - 그림 바꾸기: 대시보드 Storage → `chiikawa-sprites` 에 올리거나 지운다. anon 업로드 정책은 없다 —
