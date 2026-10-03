@@ -1,14 +1,15 @@
 {
   "name": "desktop-chiikawa",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "창마다 위에 치이카와 친구들이 올라와 돌아다니는 투명 오버레이 (맥)",
+  "description": "창마다 위에 치이카와 친구들이 올라와 돌아다니는 투명 오버레이 (맥·윈도우)",
   "scripts": {
     "start": "./mac/build.sh && { pkill -f MacOS/DesktopChiikawa || true; } && sleep 0.5 && open 'dist/mac/Chiikawa.app'",
     "build:mac": "./mac/build.sh --zip",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:win": "./windows/build.sh --zip"
   },
   "devDependencies": {
     "vitest": "^2.1.8"

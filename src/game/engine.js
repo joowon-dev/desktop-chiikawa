@@ -53,12 +53,12 @@ export function setMaxChars(world, n) {
 }
 
 /**
- * 창 목록을 바꾼다. list 는 앞에서 뒤 순서의 [{ id, x, y, w, h }].
+ * 창 목록을 바꾼다. list 는 앞에서 뒤 순서의 [{ id, x, y, w, h, dock? }]. dock 은 작업 표시줄.
  * 새 창에는 아이가 튀어나올 예약을 걸고, 크게 움직인 창 위의 아이들은 휘청이게 한다.
  */
 export function setWindows(world, list) {
   const prev = world.byId
-  world.windows = list.map((win) => ({ id: win.id, x: win.x, y: win.y, w: win.w, h: win.h }))
+  world.windows = list.map((win) => ({ id: win.id, x: win.x, y: win.y, w: win.w, h: win.h, dock: !!win.dock }))
   world.byId = new Map(world.windows.map((win) => [win.id, win]))
   recomputeSegments(world)
 

@@ -6,9 +6,12 @@
 
 import { CHAR_W, COVER_BAND, EDGE_MARGIN, MIN_TOP, MIN_WIN_H, MIN_WIN_W } from './constants.js'
 
-/** 이 창에 설 수 있나 — 크기와 윗변 높이만 본다(가림은 segments 가 본다). */
+/**
+ * 이 창에 설 수 있나 — 크기와 윗변 높이만 본다(가림은 segments 가 본다).
+ * 작업 표시줄(dock)은 낮아도 선다 — 윈도우에서 창을 최대화하면 설 데가 거기뿐이다.
+ */
 export function standable(win, screen) {
-  return win.w >= MIN_WIN_W && win.h >= MIN_WIN_H &&
+  return win.w >= MIN_WIN_W && (win.h >= MIN_WIN_H || !!win.dock) &&
     win.y >= MIN_TOP && win.y <= screen.h - 10 &&
     win.x + win.w > 0 && win.x < screen.w
 }

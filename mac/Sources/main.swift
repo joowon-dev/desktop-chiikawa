@@ -6,6 +6,8 @@
 //   3. 마우스 위치도 같이 넘긴다(아이들이 쳐다본다).
 //   4. 전역 핫키 ⌥⇧K 로 숨기기/보이기, 메뉴바 메뉴.
 //
+// **모니터마다 오버레이(창+웹뷰+월드)가 하나씩** 있다. 창 목록은 한 번만 묻고 나눠 준다.
+//
 // 창 자리는 CGWindowListCopyWindowInfo 로 묻는다. **화면 기록 권한이 필요 없다** —
 // 권한이 막는 것은 창 제목(kCGWindowName)과 창 내용이고, 위치·크기·층·주인 PID 는
 // 누구나 볼 수 있다. 제목을 읽으려 들면 그 순간부터 권한 창이 뜬다. 읽지 말 것.
@@ -34,6 +36,11 @@ private let pollInterval: TimeInterval = 1.0 / 30.0
 
 /// 이보다 작은 창은 보내지도 않는다(렌더러도 한 번 더 거른다).
 private let minWindowSide: CGFloat = 60
+
+/// 「크기」 메뉴. 윈도우 셸의 SizeChoices 와 같은 값이다 — 한쪽만 바꾸면 두 플랫폼이 다른 앱이 된다.
+private let sizeChoices: [(String, Double)] = [
+    ("아주 작게", 0.6), ("작게", 0.9), ("보통", 1.2), ("크게", 1.6), ("아주 크게", 2.2),
+]
 
 func debugLog(_ text: String) {
     guard ProcessInfo.processInfo.environment["CHIIKAWA_DEBUG"] != nil else { return }
@@ -113,67 +120,32 @@ final class WebAssetHandler: NSObject, WKURLSchemeHandler {
     func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
 }
 
-// MARK: - 앱
+// MARK: - 오버레이 한 장 (모니터 하나)
 
-final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
-    private var window: NSWindow!
-    private var webView: WKWebView!
-    private var statusItem: NSStatusItem!
-    private var hotKeys: [EventHotKeyRef?] = []
-    private var pollTimer: Timer?
+/// WKUserContentController 는 핸들러를 강하게 붙든다. 오버레이를 버릴 때 같이 놓이도록
+/// 약한 다리를 하나 끼운다 — 모니터를 뺐다 꽂을 때마다 웹뷰가 새는 일을 막는다.
+final class WeakHandler: NSObject, WKScriptMessageHandler {
+    weak var target: Overlay?
+    init(_ target: Overlay) { self.target = target }
+    func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
+        target?.received(message)
+    }
+}
+
+/// 모니터 하나를 덮는 투명 창 + 웹뷰. **월드도 모니터마다 따로 돈다** — 모니터마다
+/// 좌표 원점과 배율이 달라서, 한 웹뷰로 여러 모니터를 덮을 수가 없다(맥은 「디스플레이마다
+/// 별도의 Spaces」가 기본이라 창 하나가 두 모니터에 걸쳐 그려지지도 않는다).
+final class Overlay {
+    let screenNumber: Int
+    let window: NSWindow
+    let webView: WKWebView
+    private(set) var ready = false
     private var lastPayload = ""
-    private var ready = false
 
-    private var maxChars: Int {
-        get {
-            let saved = UserDefaults.standard.integer(forKey: maxCharsKey)
-            return saved > 0 ? saved : 8
-        }
-        set {
-            UserDefaults.standard.set(newValue, forKey: maxCharsKey)
-            webView.evaluateJavaScript("window.__ckMaxChars && window.__ckMaxChars(\(newValue))")
-            refreshMenu()
-        }
-    }
-
-    /// 그리는 크기 배율. 안 정했으면 1.2 — 큰 화면에서 1 은 좀 작다.
-    private var scale: Double {
-        get {
-            let saved = UserDefaults.standard.double(forKey: scaleKey)
-            return saved > 0 ? saved : 1.2
-        }
-        set {
-            UserDefaults.standard.set(newValue, forKey: scaleKey)
-            webView.evaluateJavaScript("window.__ckScale && window.__ckScale(\(newValue))")
-            refreshMenu()
-        }
-    }
-
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        buildWindow()
-        buildStatusItem()
-        registerHotKeys()
-
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            self?.moveToChosenScreen()
-            self?.refreshMenu()
-        }
-
-        let timer = Timer(timeInterval: pollInterval, repeats: true) { [weak self] _ in self?.poll() }
-        // 메뉴를 열어 둔 동안에도(트래킹 런루프 모드) 계속 돈다.
-        RunLoop.main.add(timer, forMode: .common)
-        pollTimer = timer
-    }
-
-    // MARK: 창
-
-    private func buildWindow() {
+    init(screen: NSScreen, bridge: String) {
+        screenNumber = App.number(of: screen)
         // 메뉴바까지 덮는다 — 최대화한 창 윗변에 선 아이는 메뉴바 자리에 서 있게 된다.
-        let frame = chosenScreen().frame
-
-        window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = false
@@ -187,18 +159,175 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         let config = WKWebViewConfiguration()
         let web = Bundle.main.resourceURL!.appendingPathComponent("web")
         config.setURLSchemeHandler(WebAssetHandler(root: web), forURLScheme: webScheme)
-        config.userContentController.add(self, name: "chiikawa")
         config.userContentController.addUserScript(
-            WKUserScript(source: bridgeScript(), injectionTime: .atDocumentStart, forMainFrameOnly: true)
+            WKUserScript(source: bridge, injectionTime: .atDocumentStart, forMainFrameOnly: true)
         )
-
         webView = WKWebView(frame: window.contentView!.bounds, configuration: config)
         webView.autoresizingMask = [.width, .height]
         webView.setValue(false, forKey: "drawsBackground")
+        config.userContentController.add(WeakHandler(self), name: "chiikawa")
         webView.load(URLRequest(url: URL(string: "\(webScheme)://app/renderer/index.html")!))
 
         window.contentView?.addSubview(webView)
+        window.setFrame(screen.frame, display: true)
         window.orderFrontRegardless() // 포커스는 절대 가져가지 않는다
+    }
+
+    func close() {
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "chiikawa")
+        window.orderOut(nil)
+        window.close()
+    }
+
+    func eval(_ script: String) {
+        webView.evaluateJavaScript(script)
+    }
+
+    /// 그림 목록이 바뀌었다 — 다리 스크립트를 갈아 끼우고 다시 연다.
+    func reload(bridge: String) {
+        let controller = webView.configuration.userContentController
+        controller.removeAllUserScripts()
+        controller.addUserScript(WKUserScript(source: bridge, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        ready = false
+        webView.reload()
+    }
+
+    /// 창 목록(전역 CG 좌표)을 이 모니터 좌표로 옮겨 보낸다. 이 모니터에 안 걸친 창은 뺀다.
+    func send(windows: [(id: Int, rect: CGRect)], mouse: NSPoint) {
+        guard ready, window.isVisible else { return }
+        let frame = window.frame
+        // CG 좌표는 주 화면 왼쪽 위가 원점이고 아래로 갈수록 y 가 커진다. 코코아는 반대다.
+        let originX = frame.minX
+        let originY = App.primaryScreen.frame.height - frame.maxY
+        let bounds = CGRect(origin: .zero, size: frame.size)
+
+        var rows: [[Int]] = []
+        for (id, rect) in windows {
+            let local = rect.offsetBy(dx: -originX, dy: -originY)
+            guard local.intersects(bounds) else { continue }
+            rows.append([id, Int(local.minX.rounded()), Int(local.minY.rounded()),
+                         Int(local.width.rounded()), Int(local.height.rounded())])
+        }
+        // 마우스가 다른 모니터에 있으면 이 모니터의 아이들은 쳐다볼 게 없다.
+        let m: Any = frame.contains(mouse)
+            ? [Int((mouse.x - frame.minX).rounded()), Int((frame.maxY - mouse.y).rounded())]
+            : NSNull()
+
+        let payload: [String: Any] = ["w": rows, "m": m]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8) else { return }
+        if json == lastPayload { return }
+        lastPayload = json
+        webView.evaluateJavaScript("window.__ckWindows && window.__ckWindows(\(json))")
+    }
+
+    func received(_ message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
+        switch type {
+        case "ready":
+            ready = true
+            lastPayload = ""
+            App.shared?.poll()
+        case "log":
+            if let text = body["text"] as? String {
+                FileHandle.standardError.write("[web \(screenNumber)] \(text)\n".data(using: .utf8)!)
+            }
+        default:
+            break
+        }
+    }
+}
+
+// MARK: - 앱
+
+final class App: NSObject, NSApplicationDelegate {
+    private var overlays: [Overlay] = []
+    private var visible = true
+    private var statusItem: NSStatusItem!
+    private var hotKeys: [EventHotKeyRef?] = []
+    private var pollTimer: Timer?
+
+    private var maxChars: Int {
+        get {
+            let saved = UserDefaults.standard.integer(forKey: maxCharsKey)
+            return saved > 0 ? saved : 8
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: maxCharsKey)
+            overlays.forEach { $0.eval("window.__ckMaxChars && window.__ckMaxChars(\(newValue))") }
+            refreshMenu()
+        }
+    }
+
+    /// 그리는 크기 배율. 안 정했으면 1.2 — 큰 화면에서 1 은 좀 작다.
+    private var scale: Double {
+        get {
+            let saved = UserDefaults.standard.double(forKey: scaleKey)
+            return saved > 0 ? saved : 1.2
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: scaleKey)
+            overlays.forEach { $0.eval("window.__ckScale && window.__ckScale(\(newValue))") }
+            refreshMenu()
+        }
+    }
+
+    /// 어느 모니터에 사나. 0(기본) = 모든 모니터, 그 밖에는 그 모니터 번호 하나.
+    private var chosenScreenNumber: Int {
+        get { UserDefaults.standard.integer(forKey: screenKey) }
+        set { UserDefaults.standard.set(newValue, forKey: screenKey) }
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        rebuildOverlays()
+        buildStatusItem()
+        registerHotKeys()
+
+        // 모니터를 꽂고 빼거나 해상도·배치를 바꾸면 오버레이를 새로 깐다.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.rebuildOverlays()
+            self?.refreshMenu()
+        }
+
+        let timer = Timer(timeInterval: pollInterval, repeats: true) { [weak self] _ in self?.poll() }
+        // 메뉴를 열어 둔 동안에도(트래킹 런루프 모드) 계속 돈다.
+        RunLoop.main.add(timer, forMode: .common)
+        pollTimer = timer
+    }
+
+    // MARK: 오버레이
+
+    private func targetScreens() -> [NSScreen] {
+        let chosen = chosenScreenNumber
+        if chosen != 0, let one = NSScreen.screens.first(where: { Self.number(of: $0) == chosen }) {
+            return [one]
+        }
+        // 고른 모니터가 빠졌으면(케이블을 뽑았으면) 모든 모니터로 돌아간다.
+        return NSScreen.screens
+    }
+
+    /// 모니터 구성에 맞게 오버레이를 다시 깐다. 그대로인 모니터의 오버레이는 건드리지 않는다 —
+    /// 다시 만들면 그 모니터의 아이들이 다 사라졌다 다시 튀어나온다.
+    private func rebuildOverlays() {
+        let screens = targetScreens()
+        let wanted = Set(screens.map(Self.number(of:)))
+        for overlay in overlays where !wanted.contains(overlay.screenNumber) { overlay.close() }
+        overlays.removeAll { !wanted.contains($0.screenNumber) }
+
+        for screen in screens {
+            let number = Self.number(of: screen)
+            if let existing = overlays.first(where: { $0.screenNumber == number }) {
+                // 해상도·배치만 바뀌었다.
+                existing.window.setFrame(screen.frame, display: true)
+                continue
+            }
+            let overlay = Overlay(screen: screen, bridge: bridgeScript())
+            if !visible { overlay.window.orderOut(nil) }
+            overlays.append(overlay)
+        }
+        debugLog("오버레이 \(overlays.count) 장")
     }
 
     /// 렌더러가 기대하는 window.sneaky. 값은 직렬화에 맡긴다(손으로 따옴표를 붙이지 않는다).
@@ -241,30 +370,18 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         NSWorkspace.shared.open(spritesDirectory)
     }
 
-    /// 그림 목록은 문서 시작에 주입하는 스크립트에 들어 있다. 스크립트를 새로 끼우고 다시 연다.
     @objc private func reloadSprites() {
-        let controller = webView.configuration.userContentController
-        controller.removeAllUserScripts()
-        controller.addUserScript(
-            WKUserScript(source: bridgeScript(), injectionTime: .atDocumentStart, forMainFrameOnly: true)
-        )
-        ready = false
-        webView.reload()
+        let bridge = bridgeScript()
+        overlays.forEach { $0.reload(bridge: bridge) }
         refreshMenu()
     }
 
     // MARK: 창 자리 묻기
 
-    /// 화면에 떠 있는 보통 창들을 앞에서 뒤 순서로, 오버레이 좌표(왼쪽 위 원점, 포인트)로.
-    private func poll() {
-        guard ready, window.isVisible else { return }
-        let screen = window.frame
-        // CG 좌표는 주 화면 왼쪽 위가 원점이고 아래로 갈수록 y 가 커진다. 코코아는 반대다.
-        let primaryHeight = App.primaryScreen.frame.height
-        let originX = screen.minX
-        let originY = primaryHeight - screen.maxY
-
-        var rows: [[Int]] = []
+    /// 화면에 떠 있는 보통 창들을 앞에서 뒤 순서로 **한 번만** 묻고, 모니터마다 나눠 준다.
+    func poll() {
+        guard visible, overlays.contains(where: { $0.ready }) else { return }
+        var windows: [(id: Int, rect: CGRect)] = []
         let ownPID = Int(ProcessInfo.processInfo.processIdentifier)
         if let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
             as? [[String: Any]] {
@@ -278,23 +395,11 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
                       let number = entry[kCGWindowNumber as String] as? Int
                 else { continue }
                 guard bounds.width >= minWindowSide, bounds.height >= minWindowSide else { continue }
-                let local = bounds.offsetBy(dx: -originX, dy: -originY)
-                guard local.intersects(CGRect(origin: .zero, size: screen.size)) else { continue }
-                rows.append([number, Int(local.minX.rounded()), Int(local.minY.rounded()),
-                             Int(local.width.rounded()), Int(local.height.rounded())])
+                windows.append((number, bounds))
             }
         }
-
         let mouse = NSEvent.mouseLocation
-        let mx = Int((mouse.x - screen.minX).rounded())
-        let my = Int((screen.maxY - mouse.y).rounded())
-
-        let payload: [String: Any] = ["w": rows, "m": [mx, my]]
-        guard let data = try? JSONSerialization.data(withJSONObject: payload),
-              let json = String(data: data, encoding: .utf8) else { return }
-        if json == lastPayload { return }
-        lastPayload = json
-        webView.evaluateJavaScript("window.__ckWindows && window.__ckWindows(\(json))")
+        for overlay in overlays { overlay.send(windows: windows, mouse: mouse) }
     }
 
     // MARK: 메뉴바
@@ -322,6 +427,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
 
         menu.addItem(countMenu())
         menu.addItem(scaleMenu())
+        if NSScreen.screens.count > 1 { menu.addItem(screenMenu()) }
         menu.addItem(.separator())
 
         let count = spriteFiles().count
@@ -332,14 +438,13 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         let reload = NSMenuItem(title: "그림 다시 불러오기", action: #selector(reloadSprites), keyEquivalent: "")
         reload.target = self
         menu.addItem(reload)
-        if NSScreen.screens.count > 1 { menu.addItem(screenMenu()) }
         menu.addItem(.separator())
 
         menu.addItem(NSMenuItem(title: "종료", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu
     }
 
-    /// 「몇 마리까지 ▸」.
+    /// 「몇 마리까지 ▸」. 모니터마다 이만큼이다.
     private func countMenu() -> NSMenuItem {
         let submenu = NSMenu()
         for value in [1, 2, 4, 8, 12] {
@@ -349,7 +454,8 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
             item.state = value == maxChars ? .on : .off
             submenu.addItem(item)
         }
-        let root = NSMenuItem(title: "몇 마리까지", action: nil, keyEquivalent: "")
+        let title = NSScreen.screens.count > 1 && overlays.count > 1 ? "몇 마리까지 (모니터마다)" : "몇 마리까지"
+        let root = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         root.submenu = submenu
         return root
     }
@@ -357,7 +463,7 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
     /// 「크기 ▸」.
     private func scaleMenu() -> NSMenuItem {
         let submenu = NSMenu()
-        for (title, value) in [("작게", 0.9), ("보통", 1.2), ("크게", 1.6), ("아주 크게", 2.2)] {
+        for (title, value) in sizeChoices {
             let item = NSMenuItem(title: title, action: #selector(pickScale(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = value
@@ -379,17 +485,24 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
         maxChars = value
     }
 
+    /// 「모니터 ▸」 모든 모니터 / 한 모니터만.
     private func screenMenu() -> NSMenuItem {
         let submenu = NSMenu()
-        let current = chosenScreen()
+        let all = NSMenuItem(title: "모든 모니터", action: #selector(pickScreen(_:)), keyEquivalent: "")
+        all.target = self
+        all.representedObject = 0
+        all.state = overlays.count > 1 || chosenScreenNumber == 0 ? .on : .off
+        submenu.addItem(all)
+        submenu.addItem(.separator())
         for (index, screen) in NSScreen.screens.enumerated() {
             let size = screen.frame.size
             let main = screen.frame.origin == .zero ? " (주 화면)" : ""
-            let item = NSMenuItem(title: "\(index + 1)번  \(Int(size.width))×\(Int(size.height))\(main)",
+            let item = NSMenuItem(title: "\(index + 1)번만  \(Int(size.width))×\(Int(size.height))\(main)",
                                   action: #selector(pickScreen(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = Self.number(of: screen)
-            item.state = screen == current ? .on : .off
+            item.state = overlays.count == 1 && overlays[0].screenNumber == Self.number(of: screen)
+                && chosenScreenNumber != 0 ? .on : .off
             submenu.addItem(item)
         }
         let root = NSMenuItem(title: "모니터", action: nil, keyEquivalent: "")
@@ -399,19 +512,9 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
 
     @objc private func pickScreen(_ sender: NSMenuItem) {
         guard let number = sender.representedObject as? Int else { return }
-        UserDefaults.standard.set(number, forKey: screenKey)
-        moveToChosenScreen()
+        chosenScreenNumber = number
+        rebuildOverlays()
         refreshMenu()
-    }
-
-    private func chosenScreen() -> NSScreen {
-        let saved = UserDefaults.standard.object(forKey: screenKey) as? Int
-        return NSScreen.screens.first { Self.number(of: $0) == saved } ?? Self.primaryScreen
-    }
-
-    private func moveToChosenScreen() {
-        window.setFrame(chosenScreen().frame, display: true)
-        lastPayload = "" // 좌표 원점이 바뀌었으니 같은 목록이라도 다시 보낸다
     }
 
     // MARK: 핫키 — 전역 핫키다. 키 상태 폴링이 아니다(폴링은 키를 안 삼켜서 문서에 글자가 찍힌다).
@@ -440,30 +543,11 @@ final class App: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
     }
 
     @objc private func toggleWindow() {
-        if window.isVisible {
-            window.orderOut(nil)
-        } else {
-            lastPayload = ""
-            window.orderFrontRegardless()
+        visible.toggle()
+        for overlay in overlays {
+            if visible { overlay.window.orderFrontRegardless() } else { overlay.window.orderOut(nil) }
         }
-    }
-
-    // MARK: 웹에서 오는 말
-
-    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
-        switch type {
-        case "ready":
-            ready = true
-            lastPayload = ""
-            poll()
-        case "log":
-            if let text = body["text"] as? String {
-                FileHandle.standardError.write("[web] \(text)\n".data(using: .utf8)!)
-            }
-        default:
-            break
-        }
+        if visible { poll() }
     }
 
     /// NSScreen.main 은 「키 윈도우가 있는 화면」이라 포커스를 안 갖는 이 앱에서는 엉뚱한

@@ -10,6 +10,11 @@ describe('standable', () => {
   it('전체 화면 창(윗변 0)에는 못 선다 — 아이가 화면 밖에 서게 된다', () => {
     expect(standable({ x: 0, y: 0, w: 1440, h: 900 }, screen)).toBe(false)
   })
+  it('작업 표시줄(dock)은 낮아도 선다 — 같은 높이의 보통 창은 못 선다', () => {
+    const bar = { x: 0, y: 852, w: 1440, h: 48 }
+    expect(standable({ ...bar, dock: true }, screen)).toBe(true)
+    expect(standable(bar, screen)).toBe(false)
+  })
   it('툴팁만 한 창은 창이 아니다', () => {
     expect(standable({ x: 100, y: 200, w: 120, h: 30 }, screen)).toBe(false)
   })

@@ -103,6 +103,19 @@ describe('창이 생기면 튀어나온다', () => {
   })
 })
 
+describe('윈도우: 최대화한 창 + 작업 표시줄', () => {
+  it('최대화한 창(윗변 0)에는 못 서니 작업 표시줄 위에 선다', () => {
+    const world = createWorld({ seed: 31, w: 1440, h: 900 })
+    const taskbar = { id: 1, x: 0, y: 852, w: 1440, h: 48, dock: true }
+    const maxed = { id: 2, x: 0, y: 0, w: 1440, h: 852 }
+    setWindows(world, [taskbar, maxed])
+    run(world, 6)
+    const standing = world.chars.filter((c) => c.mode === 'ground')
+    expect(standing.length).toBeGreaterThanOrEqual(1)
+    for (const ch of standing) expect(ch.win).toBe(taskbar.id)
+  })
+})
+
 describe('창 위에서', () => {
   it('창을 옮기면 위에 선 아이도 같이 간다', () => {
     const world = createWorld({ seed: 5 })

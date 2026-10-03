@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>DesktopChiikawa</AssemblyName>
+    <RootNamespace>DesktopChiikawa</RootNamespace>
+    <ApplicationIcon>icon.ico</ApplicationIcon>
+    <!-- 모니터마다 배율이 다를 수 있다. 창 좌표를 물리 픽셀로 받고, 모니터마다 따로 환산한다. -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <!-- 런타임을 담지 않는다. 시리즈의 다른 앱과 같은 방식이라 파일이 작다. -->
+    <SelfContained>false</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <Version>0.2.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+  </ItemGroup>
+
+  <!-- 게임 코드(src/)를 그대로 실어 나른다. 빌드 단계에서 손대지 않는다. 그림(sprites)은 싣지 않는다. -->
+  <ItemGroup>
+    <Content Include="..\src\game\**\*.js" Link="web\game\%(RecursiveDir)%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\src\render\**\*.js" Link="web\render\%(RecursiveDir)%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\src\renderer\**\*.*" Link="web\renderer\%(RecursiveDir)%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="icon.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

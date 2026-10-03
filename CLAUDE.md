@@ -12,6 +12,7 @@
 npm start            # 빌드 → 돌던 앱 종료 → 새로 실행 (맥)
 npm test
 npm run build:mac    # dist/DesktopChiikawa-mac.zip (임시 서명)
+npm run build:win    # dist/DesktopChiikawa-win-x64.zip (맥에서도 빌드된다 — 실행은 윈도우에서만)
 ./scripts/make-icons.sh   # build/icon.png · build/tray.png 를 draw.js 로 다시 그린다 (크롬 필요)
 CHIIKAWA_DEBUG=1 dist/mac/Chiikawa.app/Contents/MacOS/DesktopChiikawa   # 3 초마다 창·아이 목록을 stderr 로
 ```
@@ -22,8 +23,40 @@ CHIIKAWA_DEBUG=1 dist/mac/Chiikawa.app/Contents/MacOS/DesktopChiikawa   # 3 초�
 
 | 조작 | 하는 일 |
 |---|---|
-| `⌥⇧K` | 숨기기 / 보이기 |
-| 메뉴바 아이콘 | 몇 마리까지(1·2·4·8·12) · 크기 · 캐릭터 그림 폴더 열기 · 그림 다시 불러오기 · 모니터 · 종료 |
+| `⌥⇧K` (윈도우 `Alt+Shift+K`) | 숨기기 / 보이기 |
+| 메뉴바 아이콘 (윈도우 트레이) | 몇 마리까지(1·2·4·8·12, 모니터마다) · 크기(아주 작게 0.6 ~ 아주 크게 2.2) · 모니터(모든 모니터 / 한 모니터만) · 캐릭터 그림 폴더 열기 · 그림 다시 불러오기 · 종료 |
+
+## 여러 모니터
+
+**모니터마다 오버레이(창 + 웹뷰 + 월드)가 하나씩** 있다. 기본은 「모든 모니터」이고 메뉴에서
+한 모니터만 고를 수도 있다(고른 모니터를 빼면 모든 모니터로 돌아간다). 창 목록은 셸이
+**한 번만** 묻고 모니터마다 그 모니터 좌표로 옮겨 나눠 준다. 두 모니터에 걸친 창은 양쪽 월드에
+다 들어가고, 각자 자기 쪽 윗변만 쓴다. 마우스가 다른 모니터에 있으면 그 모니터에는 `m: null`.
+모니터 구성이 바뀌면(꽂기·빼기·해상도) 바뀐 모니터의 오버레이만 새로 만든다 — 그대로인
+모니터의 아이들은 그대로 산다.
+
+- 맥은 「디스플레이마다 별도의 Spaces」가 기본이라 창 하나가 두 모니터에 걸쳐 그려지지 않는다.
+  그래서 한 장으로 다 덮지 않고 모니터마다 따로 띄운다.
+- 아이가 모니터 사이를 건너가지는 않는다(월드가 따로다).
+- **실제 듀얼 모니터에서는 아직 돌려 보지 않았다**(이 맥은 모니터가 하나다).
+
+## 윈도우 셸 (`windows/Program.cs`)
+
+맥 셸과 같은 일을 하고 다리(`window.sneaky`)도 같다. 다른 점만:
+
+- 창 목록: `EnumWindows`(앞→뒤). 숨김·최소화·클로킹(다른 가상 데스크톱)·도구 창·제목 없는 창·
+  바탕화면(Progman/WorkerW)은 뺀다. 테두리는 `DWMWA_EXTENDED_FRAME_BOUNDS` — `GetWindowRect` 는
+  보이지 않는 그림자 테두리까지 넣어서 아이들이 7px 허공에 선다. 창 제목은 길이만 본다.
+- **작업 표시줄도 넘긴다**(여섯째 칸 `1` = dock). 윈도우에서 최대화한 창은 윗변이 0 이라 못 서므로
+  그때는 작업 표시줄 위에 선다. 렌더러는 dock 이면 낮아도 설 수 있게 한다(`standable`).
+- 좌표는 물리 픽셀(PerMonitorV2)이고, 오버레이마다 `DeviceDpi/96` 으로 나눠 CSS 픽셀로 보낸다.
+- 파일은 `WebResourceRequested` 로 `https://chiikawa.local/` 에서 내준다. `/sprites/…` 는
+  `%APPDATA%\DesktopChiikawa\sprites` 에서 — 같은 출처라 그림 여백 자르기가 막히지 않는다.
+- 투명은 상어와 같은 DWM 픽셀 알파, 클릭 통과는 창과 **모든 자식 창**에 `WS_EX_TRANSPARENT`.
+  안 통과하면 `CHIIKAWA_LAYERED=1`. 로그는 `CHIIKAWA_DEBUG=1` 이면 `%APPDATA%\DesktopChiikawa\debug.log`.
+- **실제 윈도우에서 아직 돌려 본 적이 없다.** 첫 실행에서 볼 것: 투명한지(검은 화면이면 DWM
+  알파가 안 먹은 것), 아래 창이 클릭되는지, 작업 표시줄 위에 서는지, 배율이 다른 두 모니터에서
+  창 윗변에 정확히 서는지.
 
 ## 캐릭터 그림 폴더
 
@@ -78,7 +111,8 @@ CHIIKAWA_DEBUG=1 dist/mac/Chiikawa.app/Contents/MacOS/DesktopChiikawa   # 3 초�
 | `src/render/fx.js` | 하트·음표·눈물·풀잎·입김·반짝이·땀·먼지 |
 | `src/renderer/app.js` | 셸 ↔ 월드, 고정 타임스텝, 그리는 순서(가림) |
 | `src/renderer/demo.js` | 브라우저 전용 가짜 창 |
-| `mac/Sources/main.swift` | 오버레이 창, 창 위치 폴링, 핫키, 메뉴 |
+| `mac/Sources/main.swift` | 모니터마다 오버레이, 창 위치 폴링, 핫키, 메뉴 |
+| `windows/Program.cs` | 같은 일의 윈도우판(.NET + WebView2) |
 
 ## 고치기 전에 알 것
 
@@ -105,10 +139,7 @@ CHIIKAWA_DEBUG=1 dist/mac/Chiikawa.app/Contents/MacOS/DesktopChiikawa   # 3 초�
 
 ## 열려 있는 것
 
-- **윈도우 셸이 없다.** 맥만 있다. 윈도우로 옮기려면 `EnumWindows` + `DwmGetWindowAttribute
-  (DWMWA_EXTENDED_FRAME_BOUNDS)` 로 같은 `[id, x, y, w, h]` 목록을 만들어 같은 `window.sneaky`
-  로 넘기면 된다(게임 코드는 손대지 않는다).
+- 윈도우 셸은 컴파일만 확인했다(위). 설치본(Inno Setup)·자동 업데이트·CI 는 아직 없다.
 - 전체 화면 앱(윗변이 0)에는 못 선다 — 일부러다(아이가 화면 밖에 선다).
-- 여러 모니터에 동시에는 안 산다. 메뉴의 「모니터」로 한 화면을 고른다.
 - 그림 크기는 그림만 키운다(`setScale`). 월드 판정은 기본 크기 그대로라 「아주 크게」에서는
   앞 창 가장자리에 조금 더 일찍 잘려 보인다.

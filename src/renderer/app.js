@@ -109,9 +109,12 @@ function loadSprites(files) {
 
 // ───────────────────────────────── 셸 ↔ 월드
 
-/** 셸이 주는 창은 [id, x, y, w, h] 배열이다(짧게 보내려고). 앞에서 뒤 순서. */
+/**
+ * 셸이 주는 창은 [id, x, y, w, h, dock?] 배열이다(짧게 보내려고). 앞에서 뒤 순서.
+ * dock 이 1 이면 작업 표시줄(윈도우 셸만 보낸다).
+ */
 function applyWindows(list) {
-  setWindows(world, list.map(([id, x, y, w, h]) => ({ id, x, y, w, h })))
+  setWindows(world, list.map(([id, x, y, w, h, dock]) => ({ id, x, y, w, h, dock: dock === 1 })))
 }
 
 if (bridge) {
