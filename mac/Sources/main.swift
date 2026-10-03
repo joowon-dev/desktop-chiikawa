@@ -81,6 +81,15 @@ let spritesDirectory: URL = {
 
 private let spriteExtensions: Set<String> = ["png", "gif", "webp"]
 
+/// 친구 코드로 주인의 그림을 받아 오는 곳(Supabase Edge Function). 코드가 맞으면 비공개 버킷의
+/// 그림을 받을 10분짜리 주소를 준다. 서버 쪽은 supabase/functions/chiikawa-sprites.
+/// 확인할 때만 CHIIKAWA_FRIEND_URL 로 바꾼다(닿지 않는 주소로 「인터넷 없음」을 재현한다).
+private let friendSpritesURL = URL(string: ProcessInfo.processInfo.environment["CHIIKAWA_FRIEND_URL"]
+    ?? "https://xajmblrdkdnqoxfvsfrt.supabase.co/functions/v1/chiikawa-sprites")!
+private let friendCodeKey = "friendCode"
+/// 친구 코드로 받은 파일 이름들. 코드를 지울 때 이것만 지운다(직접 넣은 그림은 남긴다).
+private let friendFilesKey = "friendFiles"
+
 /// 폴더 안의 그림 파일 이름들(이름순).
 func spriteFiles() -> [String] {
     let names = (try? FileManager.default.contentsOfDirectory(atPath: spritesDirectory.path)) ?? []
@@ -324,6 +333,152 @@ final class App: NSObject, NSApplicationDelegate {
         pollTimer = timer
 
         scheduleUpdateChecks()
+
+        // 친구 코드를 넣어 둔 앱이면 켤 때마다 주인의 최신 그림을 받아 온다.
+        // CHIIKAWA_FRIEND_CODE 는 확인용 — 입력 창 없이 그 코드로 받아 본다.
+        if let code = ProcessInfo.processInfo.environment["CHIIKAWA_FRIEND_CODE"] ?? friendCode {
+            syncFriendSprites(code: code, interactive: false)
+        }
+    }
+
+    // MARK: 친구 코드
+    //
+    // 주인이 올린 그림을 **코드를 아는 앱만** 받는다. 그림은 비공개 버킷에 있고, 코드가 맞으면
+    // Edge Function 이 임시 주소를 준다. 받은 그림은 그림 폴더에 넣고 다시 불러온다 — 그러니
+    // 한 번 받은 뒤에는 인터넷이 끊겨도 그 그림으로 산다. 다만 받아 오는 순간 인터넷이 없으면
+    // 「인터넷 연결이 필요해요」를 띄운다.
+
+    private var friendCode: String? {
+        get { UserDefaults.standard.string(forKey: friendCodeKey) }
+        set { UserDefaults.standard.set(newValue, forKey: friendCodeKey) }
+    }
+
+    @objc private func enterFriendCode() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "친구 코드 입력"
+        alert.informativeText = "받은 친구 코드를 넣으면 그 그림으로 친구들이 나와요."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.placeholderString = "CHII-XXXX-XXXX"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "받기")
+        alert.addButton(withTitle: "취소")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let code = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !code.isEmpty else { return }
+        syncFriendSprites(code: code, interactive: true)
+    }
+
+    @objc private func refreshFriendSprites() {
+        guard let code = friendCode else { return enterFriendCode() }
+        syncFriendSprites(code: code, interactive: true)
+    }
+
+    @objc private func clearFriendCode() {
+        let names = UserDefaults.standard.stringArray(forKey: friendFilesKey) ?? []
+        for name in names {
+            try? FileManager.default.removeItem(at: spritesDirectory.appendingPathComponent(name))
+        }
+        UserDefaults.standard.removeObject(forKey: friendFilesKey)
+        friendCode = nil
+        reloadSprites()
+    }
+
+    private enum FriendResult {
+        case ok(Int)
+        case offline
+        case badCode
+        case failed
+    }
+
+    /// 코드로 그림 목록을 받고, 그림을 그림 폴더에 내려받는다. interactive 면 결과를 알려 준다.
+    private func syncFriendSprites(code: String, interactive: Bool) {
+        Task {
+            let result = await fetchFriendSprites(code: code)
+            await MainActor.run { self.finishFriendSync(code: code, result: result, interactive: interactive) }
+        }
+    }
+
+    private func fetchFriendSprites(code: String) async -> FriendResult {
+        var request = URLRequest(url: friendSpritesURL)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 15
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["code": code])
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 403 { return .badCode }
+            guard status == 200,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let files = json["files"] as? [[String: Any]]
+            else { return .failed }
+
+            try FileManager.default.createDirectory(at: spritesDirectory, withIntermediateDirectories: true)
+            var saved: [String] = []
+            for file in files {
+                // 이름은 서버가 준 것이라도 경로를 못 벗어나게 마지막 조각만 쓴다.
+                guard let rawName = file["name"] as? String, let urlText = file["url"] as? String,
+                      let url = URL(string: urlText) else { continue }
+                let name = (rawName as NSString).lastPathComponent
+                guard spriteExtensions.contains((name as NSString).pathExtension.lowercased()) else { continue }
+                let (bytes, fileResponse) = try await URLSession.shared.data(from: url)
+                guard (fileResponse as? HTTPURLResponse)?.statusCode == 200, !bytes.isEmpty else { continue }
+                try bytes.write(to: spritesDirectory.appendingPathComponent(name), options: .atomic)
+                saved.append(name)
+            }
+            UserDefaults.standard.set(saved, forKey: friendFilesKey)
+            return saved.isEmpty ? .failed : .ok(saved.count)
+        } catch let error as URLError where Self.offlineCodes.contains(error.code) {
+            return .offline
+        } catch {
+            debugLog("친구 그림 받기 실패 \(error)")
+            return .failed
+        }
+    }
+
+    private static let offlineCodes: Set<URLError.Code> = [
+        .notConnectedToInternet, .networkConnectionLost, .cannotFindHost, .cannotConnectToHost,
+        .timedOut, .dnsLookupFailed, .dataNotAllowed, .internationalRoamingOff,
+    ]
+
+    private func finishFriendSync(code: String, result: FriendResult, interactive: Bool) {
+        switch result {
+        case .ok(let count):
+            friendCode = code.uppercased()
+            reloadSprites()
+            if interactive { notify("친구 그림 \(count)장을 받았어요", "이제 그 그림으로 친구들이 나와요.") }
+        case .offline:
+            // 켤 때 조용히 받다가 끊겨 있어도 알린다 — 주인이 정한 동작이다.
+            let again = notify("인터넷 연결이 필요해요",
+                               "친구 그림을 받아 오려면 인터넷에 연결되어 있어야 해요. 연결한 뒤 다시 시도해 주세요.",
+                               retry: true)
+            if again { syncFriendSprites(code: code, interactive: true) }
+        case .badCode:
+            if interactive || friendCode != nil {
+                notify("코드가 맞지 않아요", "친구 코드를 다시 확인해 주세요. 코드가 바뀌었을 수도 있어요.")
+            }
+        case .failed:
+            if interactive { notify("그림을 받지 못했어요", "잠시 뒤에 다시 시도해 주세요.") }
+        }
+        refreshMenu()
+    }
+
+    /// 알림 창. retry 면 「다시 시도」를 눌렀는지 돌려준다.
+    @discardableResult
+    private func notify(_ title: String, _ body: String, retry: Bool = false) -> Bool {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = body
+        if retry {
+            alert.addButton(withTitle: "다시 시도")
+            alert.addButton(withTitle: "닫기")
+        } else {
+            alert.addButton(withTitle: "확인")
+        }
+        return alert.runModal() == .alertFirstButtonReturn && retry
     }
 
     // MARK: 업데이트
@@ -647,6 +802,18 @@ final class App: NSObject, NSApplicationDelegate {
         let reload = NSMenuItem(title: "그림 다시 불러오기", action: #selector(reloadSprites), keyEquivalent: "")
         reload.target = self
         menu.addItem(reload)
+        if friendCode == nil {
+            let enter = NSMenuItem(title: "친구 코드 입력…", action: #selector(enterFriendCode), keyEquivalent: "")
+            enter.target = self
+            menu.addItem(enter)
+        } else {
+            let again = NSMenuItem(title: "친구 그림 다시 받기", action: #selector(refreshFriendSprites), keyEquivalent: "")
+            again.target = self
+            menu.addItem(again)
+            let clear = NSMenuItem(title: "친구 코드 지우기", action: #selector(clearFriendCode), keyEquivalent: "")
+            clear.target = self
+            menu.addItem(clear)
+        }
         menu.addItem(.separator())
 
         let about = NSMenuItem(title: "바탕화면 치이카와 \(currentVersion)", action: nil, keyEquivalent: "")

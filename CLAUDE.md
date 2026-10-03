@@ -98,6 +98,28 @@ CHIIKAWA_DEBUG=1 dist/mac/Chiikawa.app/Contents/MacOS/DesktopChiikawa   # 3 초�
 - **공식 그림은 저장소와 앱 번들에 넣지 않는다.** 주인이 자기 컴퓨터에 넣는 것만 쓴다
   (`src/sprites/` 는 브라우저 데모용이고 gitignore 되어 있다 — `index.json` 에 파일 이름 배열).
 
+## 친구 코드 — 주인의 그림을 친구들 앱에서도
+
+공식 그림은 저장소·앱·사이트에 넣지 않는다. 대신 **주인이 Supabase 비공개 버킷에 올려 두고,
+친구 코드를 아는 앱만 받아 간다.** (몰래 야구와 같은 Supabase 프로젝트 `xajmblrdkdnqoxfvsfrt`)
+
+| 무엇 | 어디 |
+|---|---|
+| 그림 | 버킷 `chiikawa-sprites` (비공개, anon 정책 없음) — 파일 이름이 아이 이름 |
+| 코드 | 표 `public.chiikawa_codes(code, note, enabled)` (RLS 켬, anon 권한 없음) |
+| 문지기 | Edge Function `chiikawa-sprites` (`supabase/functions/`, verify_jwt=false) — 코드가 맞으면 10분짜리 서명 주소 |
+
+- 앱 메뉴 「친구 코드 입력…」 → 그림을 그림 폴더에 내려받고 다시 불러온다. 코드는 저장해 두고
+  **켤 때마다 다시 받는다**(주인이 그림을 바꾸면 친구들에게도 간다). 「친구 코드 지우기」는 받은 파일만 지운다.
+- 받아 오는 순간 인터넷이 없으면 「인터넷 연결이 필요해요」(다시 시도/닫기)를 띄운다 — 주인이 정한 동작.
+  한 번 받은 그림은 폴더에 남아서 끊겨 있어도 그 그림으로 산다.
+- 코드 더하기: `insert into chiikawa_codes (code, note) values ('CHII-XXXX-XXXX', '누구');`
+  끊기: `update chiikawa_codes set enabled = false where code = '…';` 코드는 대문자로 저장한다(앱이 대문자로 보낸다).
+- 그림 바꾸기: 대시보드 Storage → `chiikawa-sprites` 에 올리거나 지운다. anon 업로드 정책은 없다 —
+  올릴 때만 잠깐 열고 바로 닫는다(이번에 그렇게 했다).
+- 확인용 환경 변수: `CHIIKAWA_FRIEND_CODE`(입력 창 없이 그 코드로 받기), `CHIIKAWA_FRIEND_URL`(닿지 않는
+  주소로 「인터넷 없음」 재현).
+
 ## 행동과 효과
 
 행동은 월드(`engine.js` 의 `decide`)가 고르고, **효과는 렌더러(`render/fx.js`)가 행동을 보고

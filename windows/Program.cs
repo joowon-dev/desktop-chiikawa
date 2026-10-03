@@ -173,6 +173,10 @@ sealed class Settings
     public double Scale { get; set; } = 1.2;
     /// <summary>비어 있으면 모든 모니터. 그 밖에는 그 모니터의 장치 이름 하나.</summary>
     public string Screen { get; set; } = "";
+    /// <summary>친구 코드. 비어 있으면 없다.</summary>
+    public string FriendCode { get; set; } = "";
+    /// <summary>친구 코드로 받은 파일 이름들. 코드를 지울 때 이것만 지운다.</summary>
+    public List<string> FriendFiles { get; set; } = new();
 
     public static readonly string Folder = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "DesktopChiikawa");
@@ -281,6 +285,134 @@ sealed class ChiikawaContext : ApplicationContext
         firstCheck.Start();
         updateTimer.Tick += (_, _) => _ = CheckForUpdateAsync();
         updateTimer.Start();
+
+        // 친구 코드를 넣어 둔 앱이면 켤 때마다 주인의 최신 그림을 받아 온다.
+        if (Settings.FriendCode.Length > 0) _ = SyncFriendSpritesAsync(Settings.FriendCode, interactive: false);
+    }
+
+    // MARK: 친구 코드 — 맥 셸과 같다. 주인이 올린 그림을 코드를 아는 앱만 받는다.
+
+    private const string FriendSpritesUrl = "https://xajmblrdkdnqoxfvsfrt.supabase.co/functions/v1/chiikawa-sprites";
+
+    private void EnterFriendCode()
+    {
+        var code = Prompt("친구 코드 입력", "받은 친구 코드를 넣으면 그 그림으로 친구들이 나와요.", "CHII-XXXX-XXXX");
+        if (string.IsNullOrWhiteSpace(code)) return;
+        _ = SyncFriendSpritesAsync(code.Trim(), interactive: true);
+    }
+
+    private void ClearFriendCode()
+    {
+        foreach (var name in Settings.FriendFiles)
+        {
+            try { File.Delete(Path.Combine(SpritesFolder, name)); } catch { }
+        }
+        Settings.FriendFiles = new();
+        Settings.FriendCode = "";
+        Settings.Save();
+        ReloadSprites();
+    }
+
+    private enum FriendResult { Ok, Offline, BadCode, Failed }
+
+    private async Task SyncFriendSpritesAsync(string code, bool interactive)
+    {
+        var (result, saved) = await FetchFriendSpritesAsync(code);
+        var count = saved.Count;
+        switch (result)
+        {
+            case FriendResult.Ok:
+                Settings.FriendCode = code.ToUpperInvariant();
+                Settings.FriendFiles = saved;
+                Settings.Save();
+                ReloadSprites();
+                if (interactive) Notify("친구 그림을 받았어요", $"친구 그림 {count}장을 받았어요. 이제 그 그림으로 친구들이 나와요.");
+                break;
+            case FriendResult.Offline:
+                // 켤 때 조용히 받다가 끊겨 있어도 알린다 — 주인이 정한 동작이다.
+                if (MessageBox.Show(
+                        "친구 그림을 받아 오려면 인터넷에 연결되어 있어야 해요. 연결한 뒤 다시 시도해 주세요.",
+                        "인터넷 연결이 필요해요", MessageBoxButtons.RetryCancel, MessageBoxIcon.Information)
+                    == DialogResult.Retry)
+                {
+                    _ = SyncFriendSpritesAsync(code, interactive: true);
+                }
+                break;
+            case FriendResult.BadCode:
+                if (interactive || Settings.FriendCode.Length > 0)
+                    Notify("코드가 맞지 않아요", "친구 코드를 다시 확인해 주세요. 코드가 바뀌었을 수도 있어요.");
+                break;
+            default:
+                if (interactive) Notify("그림을 받지 못했어요", "잠시 뒤에 다시 시도해 주세요.");
+                break;
+        }
+        RefreshMenu();
+    }
+
+    private static async Task<(FriendResult, List<string>)> FetchFriendSpritesAsync(string code)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, FriendSpritesUrl)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new { code }), Encoding.UTF8, "application/json"),
+            };
+            using var response = await http.SendAsync(request);
+            if ((int)response.StatusCode == 403) return (FriendResult.BadCode, new());
+            if (!response.IsSuccessStatusCode) return (FriendResult.Failed, new());
+
+            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Directory.CreateDirectory(SpritesFolder);
+            var saved = new List<string>();
+            foreach (var file in doc.RootElement.GetProperty("files").EnumerateArray())
+            {
+                // 이름은 서버가 준 것이라도 경로를 못 벗어나게 마지막 조각만 쓴다.
+                var name = Path.GetFileName(file.GetProperty("name").GetString() ?? "");
+                var url = file.GetProperty("url").GetString();
+                if (name.Length == 0 || url is null) continue;
+                if (!SpriteExtensions.Contains(Path.GetExtension(name).ToLowerInvariant())) continue;
+                var bytes = await http.GetByteArrayAsync(url);
+                if (bytes.Length == 0) continue;
+                await File.WriteAllBytesAsync(Path.Combine(SpritesFolder, name), bytes);
+                saved.Add(name);
+            }
+            return (saved.Count == 0 ? FriendResult.Failed : FriendResult.Ok, saved);
+        }
+        catch (HttpRequestException)
+        {
+            // 이름 풀이 실패·연결 거부 — 대개 인터넷이 없다.
+            return (FriendResult.Offline, new());
+        }
+        catch (TaskCanceledException)
+        {
+            return (FriendResult.Offline, new());
+        }
+        catch (Exception e)
+        {
+            Log.Write($"친구 그림 받기 실패: {e.Message}");
+            return (FriendResult.Failed, new());
+        }
+    }
+
+    private static void Notify(string title, string body) =>
+        MessageBox.Show(body, title, MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+    /// <summary>한 줄 입력 창. 취소하면 null.</summary>
+    private static string? Prompt(string title, string body, string placeholder)
+    {
+        using var form = new Form
+        {
+            Text = title, Width = 380, Height = 170, FormBorderStyle = FormBorderStyle.FixedDialog,
+            StartPosition = FormStartPosition.CenterScreen, MaximizeBox = false, MinimizeBox = false, TopMost = true,
+        };
+        var label = new Label { Left = 16, Top = 14, Width = 340, Text = body };
+        var box = new TextBox { Left = 16, Top = 44, Width = 330, PlaceholderText = placeholder };
+        var ok = new Button { Text = "받기", Left = 186, Width = 76, Top = 82, DialogResult = DialogResult.OK };
+        var cancel = new Button { Text = "취소", Left = 270, Width = 76, Top = 82, DialogResult = DialogResult.Cancel };
+        form.Controls.AddRange(new Control[] { label, box, ok, cancel });
+        form.AcceptButton = ok;
+        form.CancelButton = cancel;
+        return form.ShowDialog() == DialogResult.OK ? box.Text : null;
     }
 
     // MARK: 업데이트 — 상어와 같은 두 단계. 1단계는 알리기만, 2단계는 눌러야 설치본을 받아 조용히 다시 깐다.
@@ -558,6 +690,16 @@ sealed class ChiikawaContext : ApplicationContext
             sprites > 0 ? $"캐릭터 그림 폴더 열기… ({sprites}장)" : "캐릭터 그림 폴더 열기…",
             null, (_, _) => OpenSpritesFolder()));
         menu.Items.Add(new ToolStripMenuItem("그림 다시 불러오기", null, (_, _) => ReloadSprites()));
+        if (Settings.FriendCode.Length == 0)
+        {
+            menu.Items.Add(new ToolStripMenuItem("친구 코드 입력…", null, (_, _) => EnterFriendCode()));
+        }
+        else
+        {
+            menu.Items.Add(new ToolStripMenuItem("친구 그림 다시 받기", null,
+                (_, _) => _ = SyncFriendSpritesAsync(Settings.FriendCode, interactive: true)));
+            menu.Items.Add(new ToolStripMenuItem("친구 코드 지우기", null, (_, _) => ClearFriendCode()));
+        }
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem($"바탕화면 치이카와 {CurrentVersion}") { Enabled = false });
         menu.Items.Add(new ToolStripMenuItem("종료", null, (_, _) => Quit()));
