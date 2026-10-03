@@ -271,6 +271,15 @@ sealed class ChiikawaContext : ApplicationContext
         tray.Text = "바탕화면 치이카와";
         tray.Visible = true;
 
+        // 그림이 하나도 없으면(처음 켤 때) 받아 올 때까지 친구들을 띄우지 않는다 — 도형이 먼저 나왔다가
+        // 그림으로 바뀌지 않게. 너무 오래 걸리면 도형으로 먼저 띄운다. 맥 셸과 같다.
+        if (SpriteFiles().Length == 0)
+        {
+            waitingForSprites = true;
+            var giveUp = new System.Windows.Forms.Timer { Interval = FirstSpritesWaitMs };
+            giveUp.Tick += (_, _) => { giveUp.Stop(); giveUp.Dispose(); StopWaitingForSprites(); };
+            giveUp.Start();
+        }
         Rebuild();
         RefreshMenu();
 
@@ -287,25 +296,29 @@ sealed class ChiikawaContext : ApplicationContext
         updateTimer.Tick += (_, _) => _ = CheckForUpdateAsync();
         updateTimer.Start();
 
-        // 친구 코드를 넣어 둔 앱이면 켤 때마다 주인의 최신 그림을 받아 온다.
-        if (Settings.FriendCode.Length > 0) _ = SyncFriendSpritesAsync(Settings.FriendCode, interactive: false);
-        else
-        {
-            // 코드가 없으면 켤 때마다 먼저 묻는다(주인이 정한 동작). 넣고 나면 다시 안 뜬다.
-            var ask = new System.Windows.Forms.Timer { Interval = 1200 };
-            ask.Tick += (_, _) =>
-            {
-                ask.Stop();
-                ask.Dispose();
-                if (Settings.FriendCode.Length == 0) EnterFriendCode();
-            };
-            ask.Start();
-        }
+        // 켤 때마다 주인의 최신 그림을 받아 온다. 넣어 둔 코드가 없으면 기본 코드로.
+        _ = SyncFriendSpritesAsync(ActiveFriendCode, interactive: false);
+    }
+
+    /// 처음 켤 때 그림을 기다리는 중인가. 그동안은 오버레이를 만들지 않는다.
+    private bool waitingForSprites;
+    private const int FirstSpritesWaitMs = 8000;
+
+    private void StopWaitingForSprites()
+    {
+        if (!waitingForSprites) return;
+        waitingForSprites = false;
+        Rebuild();
+        RefreshMenu();
     }
 
     // MARK: 친구 코드 — 맥 셸과 같다. 주인이 올린 그림을 코드를 아는 앱만 받는다.
 
     private const string FriendSpritesUrl = "https://xajmblrdkdnqoxfvsfrt.supabase.co/functions/v1/chiikawa-sprites";
+    /// 코드를 안 넣어도 쓰는 기본 코드(v1.1.0). 앱에 들어 있어 공개다 — DB 에서 끄면 조용히 도형으로 돈다.
+    private const string BuiltInFriendCode = "CHII-APP";
+    /// 사람이 직접 넣은 코드가 있으면 그것, 없으면 기본 코드. 기본 코드는 설정에 저장하지 않는다.
+    private string ActiveFriendCode => Settings.FriendCode.Length > 0 ? Settings.FriendCode : BuiltInFriendCode;
 
     private void EnterFriendCode()
     {
@@ -328,6 +341,8 @@ sealed class ChiikawaContext : ApplicationContext
         Settings.FriendCode = "";
         Settings.Save();
         ReloadSprites();
+        // 넣었던 코드를 지우면 기본 코드의 그림으로 돌아간다.
+        _ = SyncFriendSpritesAsync(BuiltInFriendCode, interactive: false);
     }
 
     private enum FriendResult { Ok, Offline, BadCode, Failed }
@@ -336,13 +351,16 @@ sealed class ChiikawaContext : ApplicationContext
     {
         var (result, saved) = await FetchFriendSpritesAsync(code);
         var count = saved.Count;
+        // 처음 켜서 기다리던 중이면 이제 띄운다 — 받았으면 그림으로, 못 받았으면 도형으로.
+        var wasWaiting = waitingForSprites;
+        StopWaitingForSprites();
         switch (result)
         {
             case FriendResult.Ok:
-                Settings.FriendCode = code.ToUpperInvariant();
+                if (code.ToUpperInvariant() != BuiltInFriendCode) Settings.FriendCode = code.ToUpperInvariant();
                 Settings.FriendFiles = saved;
                 Settings.Save();
-                ReloadSprites();
+                if (!wasWaiting) ReloadSprites();
                 if (interactive) Notify("친구 그림을 받았어요", $"친구 그림 {count}장을 받았어요. 이제 그 그림으로 친구들이 나와요.");
                 break;
             case FriendResult.Offline:
@@ -613,6 +631,7 @@ sealed class ChiikawaContext : ApplicationContext
     /// </summary>
     private void Rebuild()
     {
+        if (waitingForSprites) return;
         var screens = TargetScreens();
         var wanted = screens.Select(s => s.DeviceName).ToHashSet();
         foreach (var overlay in overlays.Where(o => !wanted.Contains(o.DeviceName)).ToList())
@@ -707,14 +726,14 @@ sealed class ChiikawaContext : ApplicationContext
             sprites > 0 ? $"캐릭터 그림 폴더 열기… ({sprites}장)" : "캐릭터 그림 폴더 열기…",
             null, (_, _) => OpenSpritesFolder()));
         menu.Items.Add(new ToolStripMenuItem("그림 다시 불러오기", null, (_, _) => ReloadSprites()));
+        menu.Items.Add(new ToolStripMenuItem("친구 그림 다시 받기", null,
+            (_, _) => _ = SyncFriendSpritesAsync(ActiveFriendCode, interactive: true)));
         if (Settings.FriendCode.Length == 0)
         {
             menu.Items.Add(new ToolStripMenuItem("친구 코드 입력…", null, (_, _) => EnterFriendCode()));
         }
         else
         {
-            menu.Items.Add(new ToolStripMenuItem("친구 그림 다시 받기", null,
-                (_, _) => _ = SyncFriendSpritesAsync(Settings.FriendCode, interactive: true)));
             menu.Items.Add(new ToolStripMenuItem("친구 코드 지우기", null, (_, _) => ClearFriendCode()));
         }
         menu.Items.Add(new ToolStripSeparator());

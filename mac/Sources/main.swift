@@ -87,6 +87,11 @@ private let spriteExtensions: Set<String> = ["png", "gif", "webp"]
 private let friendSpritesURL = URL(string: ProcessInfo.processInfo.environment["CHIIKAWA_FRIEND_URL"]
     ?? "https://xajmblrdkdnqoxfvsfrt.supabase.co/functions/v1/chiikawa-sprites")!
 private let friendCodeKey = "friendCode"
+/// 코드를 안 넣어도 쓰는 기본 코드. 그래서 처음 켤 때부터 주인의 그림으로 나온다(v1.1.0, 주인 요청).
+/// 앱에 들어 있어 사실상 공개다 — DB 에서 이 줄만 꺼도(enabled=false) 앱은 조용히 도형으로 돈다.
+private let builtInFriendCode = "CHII-APP"
+/// 처음 켤 때 그림을 이만큼 기다리고, 그래도 안 오면 도형으로 띄운다(나중에 오면 갈아 입힌다).
+private let firstSpritesWait: TimeInterval = 8
 /// 친구 코드로 받은 파일 이름들. 코드를 지울 때 이것만 지운다(직접 넣은 그림은 남긴다).
 private let friendFilesKey = "friendFiles"
 
@@ -316,6 +321,14 @@ final class App: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installEditMenu()
+        // 그림이 하나도 없으면(처음 켤 때) 받아 올 때까지 친구들을 띄우지 않는다 — 도형이 먼저 나왔다가
+        // 그림으로 바뀌지 않게. 너무 오래 걸리면 도형으로 먼저 띄운다.
+        if spriteFiles().isEmpty {
+            waitingForSprites = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + firstSpritesWait) { [weak self] in
+                self?.stopWaitingForSprites()
+            }
+        }
         rebuildOverlays()
         buildStatusItem()
         registerHotKeys()
@@ -335,17 +348,19 @@ final class App: NSObject, NSApplicationDelegate {
 
         scheduleUpdateChecks()
 
-        // 친구 코드를 넣어 둔 앱이면 켤 때마다 주인의 최신 그림을 받아 온다.
+        // 켤 때마다 주인의 최신 그림을 받아 온다. 넣어 둔 코드가 없으면 기본 코드로.
         // CHIIKAWA_FRIEND_CODE 는 확인용 — 입력 창 없이 그 코드로 받아 본다.
-        if let code = ProcessInfo.processInfo.environment["CHIIKAWA_FRIEND_CODE"] ?? friendCode {
-            syncFriendSprites(code: code, interactive: false)
-        } else {
-            // 코드가 없으면 켤 때마다 먼저 묻는다(주인이 정한 동작). 넣고 나면 다시 안 뜬다.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-                guard let self, self.friendCode == nil else { return }
-                self.enterFriendCode()
-            }
-        }
+        syncFriendSprites(code: ProcessInfo.processInfo.environment["CHIIKAWA_FRIEND_CODE"] ?? activeFriendCode,
+                          interactive: false)
+    }
+
+    /// 처음 켤 때 그림을 기다리는 중인가. 그동안은 오버레이를 만들지 않는다.
+    private var waitingForSprites = false
+
+    private func stopWaitingForSprites() {
+        guard waitingForSprites else { return }
+        waitingForSprites = false
+        rebuildOverlays()
     }
 
     // MARK: 친구 코드
@@ -355,10 +370,13 @@ final class App: NSObject, NSApplicationDelegate {
     // 한 번 받은 뒤에는 인터넷이 끊겨도 그 그림으로 산다. 다만 받아 오는 순간 인터넷이 없으면
     // 「인터넷 연결이 필요해요」를 띄운다.
 
+    /// 사람이 직접 넣은 코드. 기본 코드는 여기 저장하지 않는다.
     private var friendCode: String? {
         get { UserDefaults.standard.string(forKey: friendCodeKey) }
         set { UserDefaults.standard.set(newValue, forKey: friendCodeKey) }
     }
+
+    private var activeFriendCode: String { friendCode ?? builtInFriendCode }
 
     @objc private func enterFriendCode() {
         NSApp.activate(ignoringOtherApps: true)
@@ -404,8 +422,7 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     @objc private func refreshFriendSprites() {
-        guard let code = friendCode else { return enterFriendCode() }
-        syncFriendSprites(code: code, interactive: true)
+        syncFriendSprites(code: activeFriendCode, interactive: true)
     }
 
     @objc private func clearFriendCode() {
@@ -416,6 +433,8 @@ final class App: NSObject, NSApplicationDelegate {
         UserDefaults.standard.removeObject(forKey: friendFilesKey)
         friendCode = nil
         reloadSprites()
+        // 넣었던 코드를 지우면 기본 코드의 그림으로 돌아간다.
+        syncFriendSprites(code: builtInFriendCode, interactive: false)
     }
 
     private enum FriendResult {
@@ -477,10 +496,13 @@ final class App: NSObject, NSApplicationDelegate {
     ]
 
     private func finishFriendSync(code: String, result: FriendResult, interactive: Bool) {
+        // 처음 켜서 기다리던 중이면 이제 띄운다 — 받았으면 그림으로, 못 받았으면 도형으로.
+        let wasWaiting = waitingForSprites
+        stopWaitingForSprites()
         switch result {
         case .ok(let count):
-            friendCode = code.uppercased()
-            reloadSprites()
+            if code.uppercased() != builtInFriendCode { friendCode = code.uppercased() }
+            if !wasWaiting { reloadSprites() }
             if interactive { notify("친구 그림 \(count)장을 받았어요", "이제 그 그림으로 친구들이 나와요.") }
         case .offline:
             // 켤 때 조용히 받다가 끊겨 있어도 알린다 — 주인이 정한 동작이다.
@@ -671,6 +693,7 @@ final class App: NSObject, NSApplicationDelegate {
     /// 모니터 구성에 맞게 오버레이를 다시 깐다. 그대로인 모니터의 오버레이는 건드리지 않는다 —
     /// 다시 만들면 그 모니터의 아이들이 다 사라졌다 다시 튀어나온다.
     private func rebuildOverlays() {
+        if waitingForSprites { return }
         let screens = targetScreens()
         let wanted = Set(screens.map(Self.number(of:)))
         for overlay in overlays where !wanted.contains(overlay.screenNumber) { overlay.close() }
@@ -835,14 +858,14 @@ final class App: NSObject, NSApplicationDelegate {
         let reload = NSMenuItem(title: "그림 다시 불러오기", action: #selector(reloadSprites), keyEquivalent: "")
         reload.target = self
         menu.addItem(reload)
+        let again = NSMenuItem(title: "친구 그림 다시 받기", action: #selector(refreshFriendSprites), keyEquivalent: "")
+        again.target = self
+        menu.addItem(again)
         if friendCode == nil {
             let enter = NSMenuItem(title: "친구 코드 입력…", action: #selector(enterFriendCode), keyEquivalent: "")
             enter.target = self
             menu.addItem(enter)
         } else {
-            let again = NSMenuItem(title: "친구 그림 다시 받기", action: #selector(refreshFriendSprites), keyEquivalent: "")
-            again.target = self
-            menu.addItem(again)
             let clear = NSMenuItem(title: "친구 코드 지우기", action: #selector(clearFriendCode), keyEquivalent: "")
             clear.target = self
             menu.addItem(clear)
