@@ -1,6 +1,6 @@
 {
   "name": "desktop-chiikawa",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "private": true,
   "type": "module",
   "description": "창마다 위에 치이카와 친구들이 올라와 돌아다니는 투명 오버레이 (맥·윈도우)",

@@ -339,6 +339,12 @@ final class App: NSObject, NSApplicationDelegate {
         // CHIIKAWA_FRIEND_CODE 는 확인용 — 입력 창 없이 그 코드로 받아 본다.
         if let code = ProcessInfo.processInfo.environment["CHIIKAWA_FRIEND_CODE"] ?? friendCode {
             syncFriendSprites(code: code, interactive: false)
+        } else {
+            // 코드가 없으면 켤 때마다 먼저 묻는다(주인이 정한 동작). 넣고 나면 다시 안 뜬다.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                guard let self, self.friendCode == nil else { return }
+                self.enterFriendCode()
+            }
         }
     }
 

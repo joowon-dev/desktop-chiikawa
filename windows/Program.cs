@@ -289,6 +289,18 @@ sealed class ChiikawaContext : ApplicationContext
 
         // 친구 코드를 넣어 둔 앱이면 켤 때마다 주인의 최신 그림을 받아 온다.
         if (Settings.FriendCode.Length > 0) _ = SyncFriendSpritesAsync(Settings.FriendCode, interactive: false);
+        else
+        {
+            // 코드가 없으면 켤 때마다 먼저 묻는다(주인이 정한 동작). 넣고 나면 다시 안 뜬다.
+            var ask = new System.Windows.Forms.Timer { Interval = 1200 };
+            ask.Tick += (_, _) =>
+            {
+                ask.Stop();
+                ask.Dispose();
+                if (Settings.FriendCode.Length == 0) EnterFriendCode();
+            };
+            ask.Start();
+        }
     }
 
     // MARK: 친구 코드 — 맥 셸과 같다. 주인이 올린 그림을 코드를 아는 앱만 받는다.
