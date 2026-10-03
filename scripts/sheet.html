@@ -1,0 +1,60 @@
+<!doctype html>
+<!-- 캐릭터 시트: 일곱 아이를 여러 자세로 크게 그린다. ?ref 면 src/sprites/ 의 참고 그림을 맨 왼쪽에 둔다(로컬 전용). -->
+<meta charset="utf-8">
+<style>html,body{margin:0;background:#eef3f8}canvas{display:block}</style>
+<canvas id="c"></canvas>
+<script type="module">
+import { drawChar, setScale } from '../src/render/draw.js'
+
+const KINDS = ['chiikawa', 'hachiware', 'usagi', 'momonga', 'kurimanju', 'rakko', 'shisa']
+const q = new URLSearchParams(location.search)
+const only = q.get('kind')
+const kinds = only ? only.split(',') : KINDS
+const withRef = q.has('ref')
+const S = Number(q.get('s') || 3)
+const STATES = [
+  { action: 'idle', anim: 0.5 },
+  { action: 'walk', anim: 0.13 },
+  { action: 'sit', anim: 0.5, actionAge: 1 },
+  { action: 'cheer', anim: 0.2, happy: 1 },
+  { action: 'cry', anim: 0.5 },
+  { action: 'sleep', anim: 0.5, actionAge: 0.2 },
+  { action: 'idle', anim: 0.5, say: { text: '', t: 1 } },
+  { mode: 'air', vy: -300, anim: 0.5 },
+]
+const cols = STATES.length + (withRef ? 1 : 0)
+const cw = 80 * S, rh = 90 * S
+const cv = document.getElementById('c')
+const dpr = 1
+cv.width = cols * cw
+cv.height = kinds.length * rh
+const ctx = cv.getContext('2d')
+
+async function load(src) {
+  const img = new Image()
+  img.src = src
+  try { await img.decode(); return img } catch { return null }
+}
+
+setScale(S)
+for (const [r, kind] of kinds.entries()) {
+  let c0 = 0
+  if (withRef) {
+    const img = await load(`../src/sprites/${kind}.png`)
+    if (img) {
+      const h = 66 * S, w = (img.width / img.height) * h
+      ctx.drawImage(img, (cw - w) / 2, r * rh + rh - 10 * S - h, w, h)
+    }
+    c0 = 1
+  }
+  for (const [i, st] of STATES.entries()) {
+    const ch = {
+      id: 1, kind, facing: 1, mode: 'ground', action: 'idle', actionAge: 0, anim: 0,
+      squash: 0, shake: 0, happy: 0, say: null, spin: 0, vy: 0, airT: 0, ...st,
+      x: (c0 + i) * cw + cw / 2, y: r * rh + rh - 10 * S,
+    }
+    drawChar(ctx, ch)
+  }
+}
+document.title = 'done'
+</script>
