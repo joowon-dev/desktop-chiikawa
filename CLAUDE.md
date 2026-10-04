@@ -130,6 +130,10 @@ CHIIKAWA_DEBUG=1 dist/mac/Chiikawa.app/Contents/MacOS/DesktopChiikawa   # 3 초�
   달아 살린다(`installEditMenu`). 두 셸 다 클립보드에 코드처럼 생긴 글(영문·숫자·하이픈 4~20자)이 있으면 미리 채운다.
 - 코드 더하기: `insert into chiikawa_codes (code, note) values ('CHII-XXXX-XXXX', '누구');`
   끊기: `update chiikawa_codes set enabled = false where code = '…';` 코드는 대문자로 저장한다(앱이 대문자로 보낸다).
+- 받을 때 **지난번에 받았는데 이번 목록에 없는 파일은 지운다**(받은 목록 `friendFiles` 에 있던 것만 — 주인이 손으로
+  넣은 그림은 안 건드린다). 확장자를 바꿔도(png → webp) 옛 파일이 남아 새 그림과 섞이지 않는다.
+- 버킷 그림은 **높이 220px WebP**(q85, 7장 63KB)다 — 화면 키 50px × 아주 크게 2.2 × 레티나 2. 2026-10-05 에 PNG 370KB
+  에서 바꿨다(켤 때마다 받으므로 Egress·로그가 컸다). 새 그림도 이 크기로 줄여 올린다.
 - 그림 바꾸기: 대시보드 Storage → `chiikawa-sprites` 에 올리거나 지운다. anon 업로드 정책은 없다 —
   올릴 때만 잠깐 열고 바로 닫는다(이번에 그렇게 했다).
 - 확인용 환경 변수: `CHIIKAWA_FRIEND_CODE`(입력 창 없이 그 코드로 받기), `CHIIKAWA_FRIEND_URL`(닿지 않는

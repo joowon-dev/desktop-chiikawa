@@ -349,7 +349,7 @@ sealed class ChiikawaContext : ApplicationContext
 
     private async Task SyncFriendSpritesAsync(string code, bool interactive)
     {
-        var (result, saved) = await FetchFriendSpritesAsync(code);
+        var (result, saved) = await FetchFriendSpritesAsync(code, Settings.FriendFiles);
         var count = saved.Count;
         // 처음 켜서 기다리던 중이면 이제 띄운다 — 받았으면 그림으로, 못 받았으면 도형으로.
         var wasWaiting = waitingForSprites;
@@ -384,7 +384,7 @@ sealed class ChiikawaContext : ApplicationContext
         RefreshMenu();
     }
 
-    private static async Task<(FriendResult, List<string>)> FetchFriendSpritesAsync(string code)
+    private static async Task<(FriendResult, List<string>)> FetchFriendSpritesAsync(string code, List<string> previous)
     {
         try
         {
@@ -398,6 +398,7 @@ sealed class ChiikawaContext : ApplicationContext
 
             using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             Directory.CreateDirectory(SpritesFolder);
+            var listed = new List<string>();
             var saved = new List<string>();
             foreach (var file in doc.RootElement.GetProperty("files").EnumerateArray())
             {
@@ -406,12 +407,22 @@ sealed class ChiikawaContext : ApplicationContext
                 var url = file.GetProperty("url").GetString();
                 if (name.Length == 0 || url is null) continue;
                 if (!SpriteExtensions.Contains(Path.GetExtension(name).ToLowerInvariant())) continue;
+                listed.Add(name);
                 var bytes = await http.GetByteArrayAsync(url);
                 if (bytes.Length == 0) continue;
                 await File.WriteAllBytesAsync(Path.Combine(SpritesFolder, name), bytes);
                 saved.Add(name);
             }
-            return (saved.Count == 0 ? FriendResult.Failed : FriendResult.Ok, saved);
+            if (saved.Count == 0) return (FriendResult.Failed, saved);
+            // 지난번에 받았는데 이번 목록에 없는 그림은 지운다 — 주인이 버킷에서 빼거나
+            // 확장자를 바꾸면(chiikawa.png → chiikawa.webp) 옛 파일이 남아 새 그림과 섞이지 않게.
+            // 주인이 손으로 넣은 그림은 받은 목록에 없으므로 건드리지 않는다.
+            foreach (var name in previous.Where(n => !listed.Contains(n)))
+            {
+                try { File.Delete(Path.Combine(SpritesFolder, name)); } catch { }
+            }
+            // 이번에 못 받은 것도 목록에 있으면 지난번 파일이 남아 있으니 계속 우리 것으로 센다.
+            return (FriendResult.Ok, listed.Where(n => saved.Contains(n) || previous.Contains(n)).ToList());
         }
         catch (HttpRequestException)
         {

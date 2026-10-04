@@ -468,6 +468,7 @@ final class App: NSObject, NSApplicationDelegate {
             else { return .failed }
 
             try FileManager.default.createDirectory(at: spritesDirectory, withIntermediateDirectories: true)
+            var listed: [String] = []
             var saved: [String] = []
             for file in files {
                 // 이름은 서버가 준 것이라도 경로를 못 벗어나게 마지막 조각만 쓴다.
@@ -475,13 +476,24 @@ final class App: NSObject, NSApplicationDelegate {
                       let url = URL(string: urlText) else { continue }
                 let name = (rawName as NSString).lastPathComponent
                 guard spriteExtensions.contains((name as NSString).pathExtension.lowercased()) else { continue }
+                listed.append(name)
                 let (bytes, fileResponse) = try await URLSession.shared.data(from: url)
                 guard (fileResponse as? HTTPURLResponse)?.statusCode == 200, !bytes.isEmpty else { continue }
                 try bytes.write(to: spritesDirectory.appendingPathComponent(name), options: .atomic)
                 saved.append(name)
             }
-            UserDefaults.standard.set(saved, forKey: friendFilesKey)
-            return saved.isEmpty ? .failed : .ok(saved.count)
+            if saved.isEmpty { return .failed }
+            // 지난번에 받았는데 이번 목록에 없는 그림은 지운다 — 주인이 버킷에서 빼거나
+            // 확장자를 바꾸면(chiikawa.png → chiikawa.webp) 옛 파일이 남아 새 그림과 섞이지 않게.
+            // 주인이 손으로 넣은 그림은 받은 목록에 없으므로 건드리지 않는다.
+            let previous = UserDefaults.standard.stringArray(forKey: friendFilesKey) ?? []
+            for name in previous where !listed.contains(name) {
+                try? FileManager.default.removeItem(at: spritesDirectory.appendingPathComponent(name))
+            }
+            // 이번에 못 받은 것도 목록에 있으면 지난번 파일이 남아 있으니 계속 우리 것으로 센다.
+            let owned = listed.filter { saved.contains($0) || previous.contains($0) }
+            UserDefaults.standard.set(owned, forKey: friendFilesKey)
+            return .ok(saved.count)
         } catch let error as URLError where Self.offlineCodes.contains(error.code) {
             return .offline
         } catch {
