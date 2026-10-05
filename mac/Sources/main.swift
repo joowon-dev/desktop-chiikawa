@@ -94,6 +94,8 @@ private let builtInFriendCode = "CHII-APP"
 private let firstSpritesWait: TimeInterval = 8
 /// 친구 코드로 받은 파일 이름들. 코드를 지울 때 이것만 지운다(직접 넣은 그림은 남긴다).
 private let friendFilesKey = "friendFiles"
+/// 받은 그림마다 서버가 준 지문(etag). 지난번과 같고 파일도 있으면 다시 받지 않는다(v1.1.2).
+private let friendEtagsKey = "friendEtags"
 
 /// 폴더 안의 그림 파일 이름들(이름순).
 func spriteFiles() -> [String] {
@@ -431,6 +433,7 @@ final class App: NSObject, NSApplicationDelegate {
             try? FileManager.default.removeItem(at: spritesDirectory.appendingPathComponent(name))
         }
         UserDefaults.standard.removeObject(forKey: friendFilesKey)
+        UserDefaults.standard.removeObject(forKey: friendEtagsKey)
         friendCode = nil
         reloadSprites()
         // 넣었던 코드를 지우면 기본 코드의 그림으로 돌아간다.
@@ -438,7 +441,8 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     private enum FriendResult {
-        case ok(Int)
+        /// count 는 지금 가진 친구 그림 수, changed 는 폴더가 바뀌었는지(아니면 다시 불러올 까닭이 없다).
+        case ok(count: Int, changed: Bool)
         case offline
         case badCode
         case failed
@@ -468,8 +472,12 @@ final class App: NSObject, NSApplicationDelegate {
             else { return .failed }
 
             try FileManager.default.createDirectory(at: spritesDirectory, withIntermediateDirectories: true)
+            let previous = UserDefaults.standard.stringArray(forKey: friendFilesKey) ?? []
+            let oldEtags = UserDefaults.standard.dictionary(forKey: friendEtagsKey) as? [String: String] ?? [:]
+            var etags: [String: String] = [:]
             var listed: [String] = []
             var saved: [String] = []
+            var kept: [String] = []
             for file in files {
                 // 이름은 서버가 준 것이라도 경로를 못 벗어나게 마지막 조각만 쓴다.
                 guard let rawName = file["name"] as? String, let urlText = file["url"] as? String,
@@ -477,23 +485,33 @@ final class App: NSObject, NSApplicationDelegate {
                 let name = (rawName as NSString).lastPathComponent
                 guard spriteExtensions.contains((name as NSString).pathExtension.lowercased()) else { continue }
                 listed.append(name)
+                // 지문이 지난번과 같고 파일도 그대로 있으면 받지 않는다. 지문이 없으면(옛 서버) 늘 받는다.
+                let etag = file["etag"] as? String ?? ""
+                let path = spritesDirectory.appendingPathComponent(name).path
+                if !etag.isEmpty, oldEtags[name] == etag, FileManager.default.fileExists(atPath: path) {
+                    etags[name] = etag
+                    kept.append(name)
+                    continue
+                }
                 let (bytes, fileResponse) = try await URLSession.shared.data(from: url)
                 guard (fileResponse as? HTTPURLResponse)?.statusCode == 200, !bytes.isEmpty else { continue }
                 try bytes.write(to: spritesDirectory.appendingPathComponent(name), options: .atomic)
+                if !etag.isEmpty { etags[name] = etag }
                 saved.append(name)
             }
-            if saved.isEmpty { return .failed }
+            if saved.isEmpty && kept.isEmpty { return .failed }
             // 지난번에 받았는데 이번 목록에 없는 그림은 지운다 — 주인이 버킷에서 빼거나
             // 확장자를 바꾸면(chiikawa.png → chiikawa.webp) 옛 파일이 남아 새 그림과 섞이지 않게.
             // 주인이 손으로 넣은 그림은 받은 목록에 없으므로 건드리지 않는다.
-            let previous = UserDefaults.standard.stringArray(forKey: friendFilesKey) ?? []
-            for name in previous where !listed.contains(name) {
+            let stale = previous.filter { !listed.contains($0) }
+            for name in stale {
                 try? FileManager.default.removeItem(at: spritesDirectory.appendingPathComponent(name))
             }
             // 이번에 못 받은 것도 목록에 있으면 지난번 파일이 남아 있으니 계속 우리 것으로 센다.
-            let owned = listed.filter { saved.contains($0) || previous.contains($0) }
+            let owned = listed.filter { saved.contains($0) || kept.contains($0) || previous.contains($0) }
             UserDefaults.standard.set(owned, forKey: friendFilesKey)
-            return .ok(saved.count)
+            UserDefaults.standard.set(etags, forKey: friendEtagsKey)
+            return .ok(count: saved.count + kept.count, changed: !saved.isEmpty || !stale.isEmpty)
         } catch let error as URLError where Self.offlineCodes.contains(error.code) {
             return .offline
         } catch {
@@ -512,9 +530,10 @@ final class App: NSObject, NSApplicationDelegate {
         let wasWaiting = waitingForSprites
         stopWaitingForSprites()
         switch result {
-        case .ok(let count):
+        case .ok(let count, let changed):
             if code.uppercased() != builtInFriendCode { friendCode = code.uppercased() }
-            if !wasWaiting { reloadSprites() }
+            // 그림이 그대로면 다시 불러오지 않는다 — 다시 불러오면 아이들이 처음부터 다시 나온다.
+            if !wasWaiting && changed { reloadSprites() }
             if interactive { notify("친구 그림 \(count)장을 받았어요", "이제 그 그림으로 친구들이 나와요.") }
         case .offline:
             // 켤 때 조용히 받다가 끊겨 있어도 알린다 — 주인이 정한 동작이다.

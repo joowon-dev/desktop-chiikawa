@@ -130,6 +130,9 @@ CHIIKAWA_DEBUG=1 dist/mac/Chiikawa.app/Contents/MacOS/DesktopChiikawa   # 3 초�
   달아 살린다(`installEditMenu`). 두 셸 다 클립보드에 코드처럼 생긴 글(영문·숫자·하이픈 4~20자)이 있으면 미리 채운다.
 - 코드 더하기: `insert into chiikawa_codes (code, note) values ('CHII-XXXX-XXXX', '누구');`
   끊기: `update chiikawa_codes set enabled = false where code = '…';` 코드는 대문자로 저장한다(앱이 대문자로 보낸다).
+- **바뀐 그림만 받는다**(v1.1.2) — 함수가 그림마다 `etag`(Storage eTag)를 주고, 앱은 지난번 지문(`friendEtags`)과 같고
+  파일도 있으면 건너뛴다. 아무것도 안 바뀌면 웹뷰도 다시 불러오지 않는다(아이들이 처음부터 다시 나오지 않게).
+  그림을 같은 이름으로 덮어쓰면 eTag 가 바뀌어 다음 켤 때 받아 간다. etag 를 모르는 옛 앱·사이트는 늘 다 받는다.
 - 받을 때 **지난번에 받았는데 이번 목록에 없는 파일은 지운다**(받은 목록 `friendFiles` 에 있던 것만 — 주인이 손으로
   넣은 그림은 안 건드린다). 확장자를 바꿔도(png → webp) 옛 파일이 남아 새 그림과 섞이지 않는다.
 - 버킷 그림은 **높이 220px WebP**(q85, 7장 63KB)다 — 화면 키 50px × 아주 크게 2.2 × 레티나 2. 2026-10-05 에 PNG 370KB

@@ -178,6 +178,8 @@ sealed class Settings
     public string FriendCode { get; set; } = "";
     /// <summary>친구 코드로 받은 파일 이름들. 코드를 지울 때 이것만 지운다.</summary>
     public List<string> FriendFiles { get; set; } = new();
+    /// <summary>받은 그림마다 서버가 준 지문(etag). 지난번과 같고 파일도 있으면 다시 받지 않는다(v1.1.2).</summary>
+    public Dictionary<string, string> FriendEtags { get; set; } = new();
 
     public static readonly string Folder = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "DesktopChiikawa");
@@ -338,6 +340,7 @@ sealed class ChiikawaContext : ApplicationContext
             try { File.Delete(Path.Combine(SpritesFolder, name)); } catch { }
         }
         Settings.FriendFiles = new();
+        Settings.FriendEtags = new();
         Settings.FriendCode = "";
         Settings.Save();
         ReloadSprites();
@@ -349,8 +352,8 @@ sealed class ChiikawaContext : ApplicationContext
 
     private async Task SyncFriendSpritesAsync(string code, bool interactive)
     {
-        var (result, saved) = await FetchFriendSpritesAsync(code, Settings.FriendFiles);
-        var count = saved.Count;
+        var (result, saved, etags, count, changed) =
+            await FetchFriendSpritesAsync(code, Settings.FriendFiles, Settings.FriendEtags);
         // 처음 켜서 기다리던 중이면 이제 띄운다 — 받았으면 그림으로, 못 받았으면 도형으로.
         var wasWaiting = waitingForSprites;
         StopWaitingForSprites();
@@ -359,8 +362,10 @@ sealed class ChiikawaContext : ApplicationContext
             case FriendResult.Ok:
                 if (code.ToUpperInvariant() != BuiltInFriendCode) Settings.FriendCode = code.ToUpperInvariant();
                 Settings.FriendFiles = saved;
+                Settings.FriendEtags = etags;
                 Settings.Save();
-                if (!wasWaiting) ReloadSprites();
+                // 그림이 그대로면 다시 불러오지 않는다 — 다시 불러오면 아이들이 처음부터 다시 나온다.
+                if (!wasWaiting && changed) ReloadSprites();
                 if (interactive) Notify("친구 그림을 받았어요", $"친구 그림 {count}장을 받았어요. 이제 그 그림으로 친구들이 나와요.");
                 break;
             case FriendResult.Offline:
@@ -384,7 +389,9 @@ sealed class ChiikawaContext : ApplicationContext
         RefreshMenu();
     }
 
-    private static async Task<(FriendResult, List<string>)> FetchFriendSpritesAsync(string code, List<string> previous)
+    /// <summary>owned 는 받은 목록에 넣을 이름들, count 는 지금 가진 친구 그림 수, changed 는 폴더가 바뀌었는지.</summary>
+    private static async Task<(FriendResult result, List<string> owned, Dictionary<string, string> etags, int count, bool changed)>
+        FetchFriendSpritesAsync(string code, List<string> previous, Dictionary<string, string> oldEtags)
     {
         try
         {
@@ -393,13 +400,15 @@ sealed class ChiikawaContext : ApplicationContext
                 Content = new StringContent(JsonSerializer.Serialize(new { code }), Encoding.UTF8, "application/json"),
             };
             using var response = await http.SendAsync(request);
-            if ((int)response.StatusCode == 403) return (FriendResult.BadCode, new());
-            if (!response.IsSuccessStatusCode) return (FriendResult.Failed, new());
+            if ((int)response.StatusCode == 403) return (FriendResult.BadCode, new(), new(), 0, false);
+            if (!response.IsSuccessStatusCode) return (FriendResult.Failed, new(), new(), 0, false);
 
             using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             Directory.CreateDirectory(SpritesFolder);
+            var etags = new Dictionary<string, string>();
             var listed = new List<string>();
             var saved = new List<string>();
+            var kept = new List<string>();
             foreach (var file in doc.RootElement.GetProperty("files").EnumerateArray())
             {
                 // 이름은 서버가 준 것이라도 경로를 못 벗어나게 마지막 조각만 쓴다.
@@ -408,35 +417,47 @@ sealed class ChiikawaContext : ApplicationContext
                 if (name.Length == 0 || url is null) continue;
                 if (!SpriteExtensions.Contains(Path.GetExtension(name).ToLowerInvariant())) continue;
                 listed.Add(name);
+                // 지문이 지난번과 같고 파일도 그대로 있으면 받지 않는다. 지문이 없으면(옛 서버) 늘 받는다.
+                var etag = file.TryGetProperty("etag", out var e) && e.ValueKind == JsonValueKind.String ? e.GetString() ?? "" : "";
+                var path = Path.Combine(SpritesFolder, name);
+                if (etag.Length > 0 && oldEtags.TryGetValue(name, out var old) && old == etag && File.Exists(path))
+                {
+                    etags[name] = etag;
+                    kept.Add(name);
+                    continue;
+                }
                 var bytes = await http.GetByteArrayAsync(url);
                 if (bytes.Length == 0) continue;
-                await File.WriteAllBytesAsync(Path.Combine(SpritesFolder, name), bytes);
+                await File.WriteAllBytesAsync(path, bytes);
+                if (etag.Length > 0) etags[name] = etag;
                 saved.Add(name);
             }
-            if (saved.Count == 0) return (FriendResult.Failed, saved);
+            if (saved.Count == 0 && kept.Count == 0) return (FriendResult.Failed, new(), new(), 0, false);
             // 지난번에 받았는데 이번 목록에 없는 그림은 지운다 — 주인이 버킷에서 빼거나
             // 확장자를 바꾸면(chiikawa.png → chiikawa.webp) 옛 파일이 남아 새 그림과 섞이지 않게.
             // 주인이 손으로 넣은 그림은 받은 목록에 없으므로 건드리지 않는다.
-            foreach (var name in previous.Where(n => !listed.Contains(n)))
+            var stale = previous.Where(n => !listed.Contains(n)).ToList();
+            foreach (var name in stale)
             {
                 try { File.Delete(Path.Combine(SpritesFolder, name)); } catch { }
             }
             // 이번에 못 받은 것도 목록에 있으면 지난번 파일이 남아 있으니 계속 우리 것으로 센다.
-            return (FriendResult.Ok, listed.Where(n => saved.Contains(n) || previous.Contains(n)).ToList());
+            var owned = listed.Where(n => saved.Contains(n) || kept.Contains(n) || previous.Contains(n)).ToList();
+            return (FriendResult.Ok, owned, etags, saved.Count + kept.Count, saved.Count > 0 || stale.Count > 0);
         }
         catch (HttpRequestException)
         {
             // 이름 풀이 실패·연결 거부 — 대개 인터넷이 없다.
-            return (FriendResult.Offline, new());
+            return (FriendResult.Offline, new(), new(), 0, false);
         }
         catch (TaskCanceledException)
         {
-            return (FriendResult.Offline, new());
+            return (FriendResult.Offline, new(), new(), 0, false);
         }
         catch (Exception e)
         {
             Log.Write($"친구 그림 받기 실패: {e.Message}");
-            return (FriendResult.Failed, new());
+            return (FriendResult.Failed, new(), new(), 0, false);
         }
     }
 
